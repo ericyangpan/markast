@@ -1,4 +1,4 @@
-use markec::{RenderOptions, ThemeFile, build_html_document, render_markdown_to_html};
+use markrs::{RenderOptions, ThemeFile, build_html_document, render_markdown_to_html};
 
 #[test]
 fn own_fragment_renders_gfm_features() {
@@ -16,8 +16,8 @@ fn own_document_applies_theme_override_and_css() {
     let mut theme = ThemeFile::default();
     theme
         .variables
-        .insert("--markec-link".to_string(), "#ff3300".to_string());
-    theme.css = Some(".markec p { letter-spacing: 0.02em; }".to_string());
+        .insert("--markrs-link".to_string(), "#ff3300".to_string());
+    theme.css = Some(".markrs p { letter-spacing: 0.02em; }".to_string());
 
     let doc = build_html_document(
         "<p>Hello</p>",
@@ -26,10 +26,10 @@ fn own_document_applies_theme_override_and_css() {
         Some(".x { color: red; }"),
     );
 
-    assert!(doc.contains("--markec-link: #ff3300;"));
-    assert!(doc.contains(".markec p { letter-spacing: 0.02em; }"));
+    assert!(doc.contains("--markrs-link: #ff3300;"));
+    assert!(doc.contains(".markrs p { letter-spacing: 0.02em; }"));
     assert!(doc.contains(".x { color: red; }"));
-    assert!(doc.contains("<main class=\"markec\">"));
+    assert!(doc.contains("<main class=\"markrs\">"));
 }
 
 #[test]

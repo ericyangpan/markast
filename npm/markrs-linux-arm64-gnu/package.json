@@ -1,22 +1,22 @@
 {
-  "name": "markec-darwin-arm64",
+  "name": "markrs-linux-arm64-gnu",
   "version": "0.1.0",
   "license": "MIT",
-  "description": "Prebuilt markec binary for macOS arm64",
+  "description": "Prebuilt markrs binary for Linux arm64 GNU",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ericyangpan/markec.git"
+    "url": "git+https://github.com/ericyangpan/markrs.git"
   },
   "publishConfig": {
     "access": "public"
   },
   "os": [
-    "darwin"
+    "linux"
   ],
   "cpu": [
     "arm64"
   ],
   "files": [
-    "bin/markec"
+    "bin/markrs"
   ]
 }

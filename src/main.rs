@@ -4,10 +4,10 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser as ClapParser;
-use markec::{RenderOptions, ThemeFile, build_html_document, render_markdown_to_html};
+use markrs::{RenderOptions, ThemeFile, build_html_document, render_markdown_to_html};
 
 #[derive(ClapParser, Debug)]
-#[command(name = "markec", version, about = "Render Markdown to HTML")]
+#[command(name = "markrs", version, about = "Render Markdown to HTML")]
 struct Args {
     /// Markdown file path. If omitted, reads from stdin.
     input: Option<PathBuf>,
@@ -38,7 +38,7 @@ fn read_input(path: Option<PathBuf>) -> Result<String> {
     let mut stdin = io::stdin();
     if stdin.is_terminal() {
         anyhow::bail!(
-            "no input provided. pass a markdown file path or pipe content into markec (e.g. cat README.md | markec)"
+            "no input provided. pass a markdown file path or pipe content into markrs (e.g. cat README.md | markrs)"
         );
     }
 

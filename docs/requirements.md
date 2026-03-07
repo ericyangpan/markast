@@ -1,10 +1,10 @@
-# markec Requirements
+# markrs Requirements
 
 Last updated: 2026-03-05
 
 ## Product Direction
 
-`markec` is an HTML-output Markdown renderer that targets compatibility with `marked` while adding project-specific styling features.
+`markrs` is an HTML-output Markdown renderer that targets compatibility with `marked` while adding project-specific styling features.
 
 ## Priority Roadmap
 
@@ -13,7 +13,7 @@ Last updated: 2026-03-05
 - Replace `pulldown-cmark` with an in-house parser implementation.
 - Build the parser from scratch in Rust and make it the default parsing core.
 - Keep passing:
-  - markec own test suite
+  - markrs own test suite
   - marked compatibility suite (with shrinking `tests/compat/xfail.yaml`)
 
 Acceptance criteria:

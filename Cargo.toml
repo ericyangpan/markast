@@ -1,10 +1,10 @@
 [package]
-name = "markec"
+name = "markrs"
 version = "0.1.0"
 edition = "2024"
 description = "Rust-powered markdown to HTML renderer with customizable styles"
 license = "MIT"
-repository = "https://github.com/ericyangpan/markec"
+repository = "https://github.com/ericyangpan/markrs"
 readme = "README.md"
 keywords = ["markdown", "cli", "terminal", "color"]
 categories = ["command-line-utilities", "text-processing"]

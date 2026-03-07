@@ -4,7 +4,7 @@ Last updated: 2026-03-05
 
 ## 1. Objective
 
-Implement a from-scratch Rust Markdown parser for `markec` without changing the public rendering contract.
+Implement a from-scratch Rust Markdown parser for `markrs` without changing the public rendering contract.
 
 Public contract to preserve:
 
@@ -175,7 +175,7 @@ Evaluation order per candidate line:
 
 ### 8.4 Autolink handling
 
-- Keep current markec policy:
+- Keep current markrs policy:
   - plain `www.` auto-link in GFM mode
   - plain emails auto-link in GFM mode
   - skip inside `a/code/pre/script/style/textarea`
@@ -225,7 +225,7 @@ Reduction strategy:
 During migration, the codebase is expected to converge on the new in-house parser as
 the default and only active rendering path.
 
-`markec` legacy routing has been removed from `src/markdown/mod.rs`.
+`markrs` legacy routing has been removed from `src/markdown/mod.rs`.
 Rendering now goes through the new parser pipeline directly:
 `render_html::render_markdown_to_html`.
 
@@ -375,7 +375,7 @@ Mitigation:
 DL-001:
 
 - Keep autolink and softbreak behavior as explicit post-process passes in P0
-- Reason: reduces parser-core complexity while preserving current markec behavior
+- Reason: reduces parser-core complexity while preserving current markrs behavior
 
 DL-002:
 

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use markec::{RenderOptions, render_markdown_to_html};
+use markrs::{RenderOptions, render_markdown_to_html};
 use serde_json::Value;
 
 fn compat_fixture_pair(name: &str) -> (String, String) {

@@ -1,6 +1,6 @@
-# markec
+# markrs
 
-`markec` is a Rust Markdown renderer distributed through npm.
+`markrs` is a Rust Markdown renderer distributed through npm.
 
 By default it outputs HTML fragments like `marked`.
 It can also output a full HTML document with built-in or custom styles.
@@ -8,7 +8,7 @@ It can also output a full HTML document with built-in or custom styles.
 ## Install
 
 ```bash
-npm i -g markec
+npm i -g markrs
 ```
 
 ## Usage
@@ -16,22 +16,22 @@ npm i -g markec
 Render Markdown to HTML fragment (default):
 
 ```bash
-markec README.md > out.html
-cat README.md | markec
+markrs README.md > out.html
+cat README.md | markrs
 ```
 
 Render full HTML document with built-in theme:
 
 ```bash
-markec --document --theme github README.md > page.html
-markec --document --theme dracula README.md > page.html
-markec --document --theme paper README.md > page.html
+markrs --document --theme github README.md > page.html
+markrs --document --theme dracula README.md > page.html
+markrs --document --theme paper README.md > page.html
 ```
 
 Apply custom style definition (JSON):
 
 ```bash
-markec --document --theme-file theme.json README.md > page.html
+markrs --document --theme-file theme.json README.md > page.html
 ```
 
 `theme.json` format:
@@ -39,18 +39,18 @@ markec --document --theme-file theme.json README.md > page.html
 ```json
 {
   "variables": {
-    "--markec-bg": "#0f1115",
-    "--markec-fg": "#f2f5f9",
-    "--markec-link": "#65c1ff"
+    "--markrs-bg": "#0f1115",
+    "--markrs-fg": "#f2f5f9",
+    "--markrs-link": "#65c1ff"
   },
-  "css": ".markec h1 { letter-spacing: 0.02em; }"
+  "css": ".markrs h1 { letter-spacing: 0.02em; }"
 }
 ```
 
 Append extra CSS file:
 
 ```bash
-markec --document --css ./extra.css README.md > page.html
+markrs --document --css ./extra.css README.md > page.html
 ```
 
 ## Development
@@ -84,4 +84,4 @@ GitHub Actions workflow `.github/workflows/release.yml` will:
 
 1. Build each platform binary.
 2. Pack and publish platform npm packages.
-3. Publish the main package `markec`.
+3. Publish the main package `markrs`.

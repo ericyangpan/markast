@@ -1,28 +1,28 @@
 {
-  "name": "markec",
+  "name": "markrs",
   "version": "0.1.0",
   "description": "Rust-powered markdown to HTML renderer with customizable styles",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ericyangpan/markec.git"
+    "url": "git+https://github.com/ericyangpan/markrs.git"
   },
-  "homepage": "https://github.com/ericyangpan/markec#readme",
+  "homepage": "https://github.com/ericyangpan/markrs#readme",
   "bugs": {
-    "url": "https://github.com/ericyangpan/markec/issues"
+    "url": "https://github.com/ericyangpan/markrs/issues"
   },
   "publishConfig": {
     "access": "public"
   },
   "optionalDependencies": {
-    "markec-darwin-arm64": "0.1.0",
-    "markec-darwin-x64": "0.1.0",
-    "markec-linux-arm64-gnu": "0.1.0",
-    "markec-linux-x64-gnu": "0.1.0",
-    "markec-win32-x64-msvc": "0.1.0"
+    "markrs-darwin-arm64": "0.1.0",
+    "markrs-darwin-x64": "0.1.0",
+    "markrs-linux-arm64-gnu": "0.1.0",
+    "markrs-linux-x64-gnu": "0.1.0",
+    "markrs-win32-x64-msvc": "0.1.0"
   },
   "bin": {
-    "markec": "bin/markec.js"
+    "markrs": "bin/markrs.js"
   },
   "files": [
     "Cargo.toml",

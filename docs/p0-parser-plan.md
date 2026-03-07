@@ -4,7 +4,7 @@ Last updated: 2026-03-06
 
 ## Goal
 
-Build a Rust Markdown parser from scratch and remove `pulldown-cmark` from `markec`.
+Build a Rust Markdown parser from scratch and remove `pulldown-cmark` from `markrs`.
 
 Detailed design:
 
@@ -105,7 +105,7 @@ Exit criteria:
 - New parser path is the runtime default rendering route.
 - Own tests compile and run.
 
-Status: completed (default render route switched to `render_markdown_to_html` in `src/markdown/mod.rs`; old `markec` branch removed).
+Status: completed (default render route switched to `render_markdown_to_html` in `src/markdown/mod.rs`; old `markrs` branch removed).
 
 ### M2: Block Completeness
 

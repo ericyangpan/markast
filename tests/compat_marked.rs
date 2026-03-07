@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use markec::{RenderOptions, render_markdown_to_html};
+use markrs::{RenderOptions, render_markdown_to_html};
 use regex::Regex;
 use serde::Deserialize;
 use walkdir::WalkDir;
@@ -337,7 +337,7 @@ fn write_xfail(path: &Path, failing_ids: &[String]) {
     let mut out = String::new();
     out.push_str("# Auto-generated baseline for marked compatibility mismatches.\n");
     out.push_str(
-        "# Update with: MARKEC_WRITE_XFAIL=1 cargo test --test compat_marked -- --nocapture\n",
+        "# Update with: MARKRS_WRITE_XFAIL=1 cargo test --test compat_marked -- --nocapture\n",
     );
     out.push_str("cases:\n");
 
@@ -356,8 +356,8 @@ fn write_xfail(path: &Path, failing_ids: &[String]) {
 fn marked_compatibility_suite() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let xfail_path = repo_root.join("tests/compat/xfail.yaml");
-    let ignore_xfail = std::env::var("MARKEC_IGNORE_XFAIL").ok().as_deref() == Some("1");
-    let print_diffs = std::env::var("MARKEC_PRINT_DIFFS")
+    let ignore_xfail = std::env::var("MARKRS_IGNORE_XFAIL").ok().as_deref() == Some("1");
+    let print_diffs = std::env::var("MARKRS_PRINT_DIFFS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(0);
@@ -411,7 +411,7 @@ fn marked_compatibility_suite() {
         }
     }
 
-    if std::env::var("MARKEC_WRITE_XFAIL").ok().as_deref() == Some("1") {
+    if std::env::var("MARKRS_WRITE_XFAIL").ok().as_deref() == Some("1") {
         let mut baseline = failures.clone();
         baseline.extend(xfailed.clone());
         baseline.sort();
@@ -485,7 +485,7 @@ fn marked_compatibility_suite() {
     if !report.is_empty() {
         panic!(
             "marked compatibility check failed.\n{}
-summary: total_cases={}, xfailed={}, new_failures={}, recovered={}, stale_xfail={}\n\nIf baseline changed intentionally, refresh with:\nMARKEC_WRITE_XFAIL=1 cargo test --test compat_marked -- --nocapture",
+summary: total_cases={}, xfailed={}, new_failures={}, recovered={}, stale_xfail={}\n\nIf baseline changed intentionally, refresh with:\nMARKRS_WRITE_XFAIL=1 cargo test --test compat_marked -- --nocapture",
             report,
             cases.len(),
             xfailed.len(),

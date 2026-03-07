@@ -35,31 +35,31 @@ fn preset_theme_vars(theme: &str) -> BTreeMap<String, String> {
     let mut vars = BTreeMap::new();
     match theme {
         "dracula" => {
-            vars.insert("--markec-bg".to_string(), "#282a36".to_string());
-            vars.insert("--markec-fg".to_string(), "#f8f8f2".to_string());
-            vars.insert("--markec-muted".to_string(), "#bd93f9".to_string());
-            vars.insert("--markec-border".to_string(), "#44475a".to_string());
-            vars.insert("--markec-link".to_string(), "#8be9fd".to_string());
-            vars.insert("--markec-code-bg".to_string(), "#1f212b".to_string());
-            vars.insert("--markec-quote".to_string(), "#50fa7b".to_string());
+            vars.insert("--markrs-bg".to_string(), "#282a36".to_string());
+            vars.insert("--markrs-fg".to_string(), "#f8f8f2".to_string());
+            vars.insert("--markrs-muted".to_string(), "#bd93f9".to_string());
+            vars.insert("--markrs-border".to_string(), "#44475a".to_string());
+            vars.insert("--markrs-link".to_string(), "#8be9fd".to_string());
+            vars.insert("--markrs-code-bg".to_string(), "#1f212b".to_string());
+            vars.insert("--markrs-quote".to_string(), "#50fa7b".to_string());
         }
         "paper" => {
-            vars.insert("--markec-bg".to_string(), "#fffdf8".to_string());
-            vars.insert("--markec-fg".to_string(), "#2c241b".to_string());
-            vars.insert("--markec-muted".to_string(), "#8e7f73".to_string());
-            vars.insert("--markec-border".to_string(), "#e8dccf".to_string());
-            vars.insert("--markec-link".to_string(), "#9f3a00".to_string());
-            vars.insert("--markec-code-bg".to_string(), "#f4ede2".to_string());
-            vars.insert("--markec-quote".to_string(), "#b7791f".to_string());
+            vars.insert("--markrs-bg".to_string(), "#fffdf8".to_string());
+            vars.insert("--markrs-fg".to_string(), "#2c241b".to_string());
+            vars.insert("--markrs-muted".to_string(), "#8e7f73".to_string());
+            vars.insert("--markrs-border".to_string(), "#e8dccf".to_string());
+            vars.insert("--markrs-link".to_string(), "#9f3a00".to_string());
+            vars.insert("--markrs-code-bg".to_string(), "#f4ede2".to_string());
+            vars.insert("--markrs-quote".to_string(), "#b7791f".to_string());
         }
         _ => {
-            vars.insert("--markec-bg".to_string(), "#ffffff".to_string());
-            vars.insert("--markec-fg".to_string(), "#1f2328".to_string());
-            vars.insert("--markec-muted".to_string(), "#59636e".to_string());
-            vars.insert("--markec-border".to_string(), "#d0d7de".to_string());
-            vars.insert("--markec-link".to_string(), "#0969da".to_string());
-            vars.insert("--markec-code-bg".to_string(), "#f6f8fa".to_string());
-            vars.insert("--markec-quote".to_string(), "#6e7781".to_string());
+            vars.insert("--markrs-bg".to_string(), "#ffffff".to_string());
+            vars.insert("--markrs-fg".to_string(), "#1f2328".to_string());
+            vars.insert("--markrs-muted".to_string(), "#59636e".to_string());
+            vars.insert("--markrs-border".to_string(), "#d0d7de".to_string());
+            vars.insert("--markrs-link".to_string(), "#0969da".to_string());
+            vars.insert("--markrs-code-bg".to_string(), "#f6f8fa".to_string());
+            vars.insert("--markrs-quote".to_string(), "#6e7781".to_string());
         }
     }
     vars
@@ -74,81 +74,81 @@ fn base_stylesheet() -> &'static str {
 }
 body {
   margin: 0;
-  background: var(--markec-bg);
-  color: var(--markec-fg);
+  background: var(--markrs-bg);
+  color: var(--markrs-fg);
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif;
   line-height: 1.6;
 }
-.markec {
+.markrs {
   max-width: 900px;
   margin: 0 auto;
   padding: 2.5rem 1.2rem 4rem;
 }
-.markec :is(h1, h2, h3, h4, h5, h6) {
+.markrs :is(h1, h2, h3, h4, h5, h6) {
   line-height: 1.25;
   margin: 1.35em 0 0.55em;
 }
-.markec h1 {
+.markrs h1 {
   font-size: 2rem;
-  border-bottom: 1px solid var(--markec-border);
+  border-bottom: 1px solid var(--markrs-border);
   padding-bottom: 0.35rem;
 }
-.markec h2 {
+.markrs h2 {
   font-size: 1.5rem;
-  border-bottom: 1px solid var(--markec-border);
+  border-bottom: 1px solid var(--markrs-border);
   padding-bottom: 0.25rem;
 }
-.markec p,
-.markec ul,
-.markec ol,
-.markec blockquote,
-.markec table,
-.markec pre {
+.markrs p,
+.markrs ul,
+.markrs ol,
+.markrs blockquote,
+.markrs table,
+.markrs pre {
   margin: 0 0 1rem;
 }
-.markec a {
-  color: var(--markec-link);
+.markrs a {
+  color: var(--markrs-link);
   text-decoration: underline;
 }
-.markec code {
+.markrs code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  background: var(--markec-code-bg);
-  border: 1px solid var(--markec-border);
+  background: var(--markrs-code-bg);
+  border: 1px solid var(--markrs-border);
   border-radius: 6px;
   padding: 0.1em 0.35em;
   font-size: 0.92em;
 }
-.markec pre {
-  background: var(--markec-code-bg);
-  border: 1px solid var(--markec-border);
+.markrs pre {
+  background: var(--markrs-code-bg);
+  border: 1px solid var(--markrs-border);
   border-radius: 10px;
   padding: 0.9rem;
   overflow-x: auto;
 }
-.markec pre code {
+.markrs pre code {
   border: 0;
   padding: 0;
   background: transparent;
 }
-.markec blockquote {
+.markrs blockquote {
   margin-left: 0;
   padding: 0.2rem 1rem;
-  border-left: 4px solid var(--markec-quote);
-  color: var(--markec-muted);
+  border-left: 4px solid var(--markrs-quote);
+  color: var(--markrs-muted);
 }
-.markec table {
+.markrs table {
   border-collapse: collapse;
   width: 100%;
 }
-.markec th,
-.markec td {
-  border: 1px solid var(--markec-border);
+.markrs th,
+.markrs td {
+  border: 1px solid var(--markrs-border);
   padding: 0.45rem 0.65rem;
   text-align: left;
 }
-.markec hr {
+.markrs hr {
   border: 0;
-  border-top: 1px solid var(--markec-border);
+  border-top: 1px solid var(--markrs-border);
   margin: 1.5rem 0;
 }
 "#
@@ -204,6 +204,6 @@ pub fn build_html_document(
     }
 
     format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>markec output</title>\n  <style>\n{styles}  </style>\n</head>\n<body>\n  <main class=\"markec\">\n{fragment}\n  </main>\n</body>\n</html>\n"
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>markrs output</title>\n  <style>\n{styles}  </style>\n</head>\n<body>\n  <main class=\"markrs\">\n{fragment}\n  </main>\n</body>\n</html>\n"
     )
 }

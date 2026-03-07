@@ -5,15 +5,15 @@ const { dirname, join } = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const packageRoot = join(__dirname, '..');
-const binaryName = process.platform === 'win32' ? 'markec.exe' : 'markec';
+const binaryName = process.platform === 'win32' ? 'markrs.exe' : 'markrs';
 const localBinaryPath = join(packageRoot, 'target', 'release', binaryName);
 
 const PLATFORM_PACKAGES = {
-  'darwin-arm64': 'markec-darwin-arm64',
-  'darwin-x64': 'markec-darwin-x64',
-  'linux-arm64': 'markec-linux-arm64-gnu',
-  'linux-x64': 'markec-linux-x64-gnu',
-  'win32-x64': 'markec-win32-x64-msvc',
+  'darwin-arm64': 'markrs-darwin-arm64',
+  'darwin-x64': 'markrs-darwin-x64',
+  'linux-arm64': 'markrs-linux-arm64-gnu',
+  'linux-x64': 'markrs-linux-x64-gnu',
+  'win32-x64': 'markrs-win32-x64-msvc',
 };
 
 function run(cmd, args) {
@@ -23,7 +23,7 @@ function run(cmd, args) {
   });
 
   if (res.error) {
-    console.error(`[markec] Failed to execute ${cmd}: ${res.error.message}`);
+    console.error(`[markrs] Failed to execute ${cmd}: ${res.error.message}`);
     process.exit(1);
   }
 
@@ -60,18 +60,18 @@ function failNoBinary() {
   const expectedPkg = PLATFORM_PACKAGES[key];
 
   const lines = [
-    `[markec] No prebuilt binary found for ${key}.`,
+    `[markrs] No prebuilt binary found for ${key}.`,
   ];
 
   if (expectedPkg) {
-    lines.push(`[markec] Expected optional dependency: ${expectedPkg}`);
-    lines.push('[markec] Reinstall with optional deps enabled:');
-    lines.push('  npm i markec --include=optional');
+    lines.push(`[markrs] Expected optional dependency: ${expectedPkg}`);
+    lines.push('[markrs] Reinstall with optional deps enabled:');
+    lines.push('  npm i markrs --include=optional');
   } else {
-    lines.push('[markec] This platform is not supported by prebuilt releases yet.');
+    lines.push('[markrs] This platform is not supported by prebuilt releases yet.');
   }
 
-  lines.push('[markec] For local development, set MARKEC_BUILD_FROM_SOURCE=1 to build from source.');
+  lines.push('[markrs] For local development, set MARKRS_BUILD_FROM_SOURCE=1 to build from source.');
 
   console.error(lines.join('\n'));
   process.exit(1);
@@ -86,7 +86,7 @@ if (existsSync(localBinaryPath)) {
   run(localBinaryPath, process.argv.slice(2));
 }
 
-if (process.env.MARKEC_BUILD_FROM_SOURCE === '1') {
+if (process.env.MARKRS_BUILD_FROM_SOURCE === '1') {
   run('cargo', ['build', '--release']);
   run(localBinaryPath, process.argv.slice(2));
 }

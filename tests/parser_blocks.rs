@@ -1,4 +1,4 @@
-use markec::{RenderOptions, render_markdown_to_html};
+use markrs::{RenderOptions, render_markdown_to_html};
 
 #[test]
 fn parser_blocks_parenthesized_ordered_lists_render() {
