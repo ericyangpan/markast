@@ -1,0 +1,22 @@
+{
+  "name": "markec-linux-x64-gnu",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Prebuilt markec binary for Linux x64 GNU",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ericyangpan/markec.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/markec"
+  ]
+}

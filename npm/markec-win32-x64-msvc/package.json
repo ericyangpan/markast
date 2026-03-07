@@ -1,0 +1,22 @@
+{
+  "name": "markec-win32-x64-msvc",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Prebuilt markec binary for Windows x64 MSVC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ericyangpan/markec.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/markec.exe"
+  ]
+}

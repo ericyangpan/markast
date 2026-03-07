@@ -1,0 +1,16 @@
+# markec
+
+A **tiny** CLI written in _Rust_.
+
+- [x] Supports lists
+- [ ] Supports color
+
+> Blockquote should be prefixed and styled.
+
+Use `markec README.md`.
+
+```rust
+fn main() {
+    println!("hello from markec");
+}
+```

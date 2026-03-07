@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-platform-package:
+    name: Build ${{ matrix.package_dir }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            package_dir: markec-darwin-arm64
+            binary_ext: ''
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            package_dir: markec-darwin-x64
+            binary_ext: ''
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            package_dir: markec-linux-x64-gnu
+            binary_ext: ''
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            package_dir: markec-linux-arm64-gnu
+            binary_ext: ''
+            linker: aarch64-linux-gnu-gcc
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            package_dir: markec-win32-x64-msvc
+            binary_ext: '.exe'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check npm package versions
+        run: npm run check:npm-versions
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux arm64 linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build binary
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+        run: cargo build --locked --release --target "${{ matrix.target }}"
+
+      - name: Stage platform package
+        shell: bash
+        run: |
+          node scripts/stage-npm-binary.mjs \
+            "npm/${{ matrix.package_dir }}" \
+            "target/${{ matrix.target }}/release/markec${{ matrix.binary_ext }}"
+
+      - name: Upload platform package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package_dir }}
+          path: npm/${{ matrix.package_dir }}
+          if-no-files-found: error
+
+  publish-npm:
+    name: Publish npm packages
+    needs: build-platform-package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Check npm package versions
+        run: npm run check:npm-versions
+
+      - name: Verify tag version
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) != package version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Download platform package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/platform-packages
+
+      - name: Publish platform packages
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          while IFS= read -r package_json; do
+            dir="$(dirname "$package_json")"
+            echo "Publishing $dir"
+            npm publish "$dir" --access public --provenance
+          done < <(find dist/platform-packages -name package.json -not -path '*/node_modules/*' | sort)
+
+      - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance

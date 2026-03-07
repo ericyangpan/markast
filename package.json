@@ -1,0 +1,56 @@
+{
+  "name": "markec",
+  "version": "0.1.0",
+  "description": "Rust-powered markdown to HTML renderer with customizable styles",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ericyangpan/markec.git"
+  },
+  "homepage": "https://github.com/ericyangpan/markec#readme",
+  "bugs": {
+    "url": "https://github.com/ericyangpan/markec/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "optionalDependencies": {
+    "markec-darwin-arm64": "0.1.0",
+    "markec-darwin-x64": "0.1.0",
+    "markec-linux-arm64-gnu": "0.1.0",
+    "markec-linux-x64-gnu": "0.1.0",
+    "markec-win32-x64-msvc": "0.1.0"
+  },
+  "bin": {
+    "markec": "bin/markec.js"
+  },
+  "files": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "cargo build --release",
+    "dev": "cargo run --",
+    "test": "cargo test --all-targets",
+    "test:own": "cargo test --test own_rendering",
+    "test:compat": "cargo test --test compat_marked",
+    "test:compat:update-xfail": "./scripts/update-compat-xfail.sh",
+    "check": "cargo check",
+    "sync:npm-versions": "node scripts/sync-npm-versions.mjs",
+    "check:npm-versions": "node scripts/check-npm-versions.mjs"
+  },
+  "keywords": [
+    "markdown",
+    "rust",
+    "cli",
+    "html",
+    "css"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

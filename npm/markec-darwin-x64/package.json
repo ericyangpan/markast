@@ -1,0 +1,22 @@
+{
+  "name": "markec-darwin-x64",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Prebuilt markec binary for macOS x64",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ericyangpan/markec.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/markec"
+  ]
+}

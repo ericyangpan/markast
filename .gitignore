@@ -1,0 +1,6 @@
+/target
+node_modules
+.DS_Store
+npm/*/bin/markec
+npm/*/bin/markec.exe
+*.tgz
