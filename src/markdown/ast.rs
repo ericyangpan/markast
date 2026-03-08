@@ -18,17 +18,12 @@ pub(crate) enum Block {
         tight: bool,
         items: Vec<ListItem>,
     },
-    ListItem {
-        children: Vec<Block>,
-        task: Option<bool>,
-    },
     BlockQuote {
         children: Vec<Block>,
     },
     CodeBlock {
         info: Option<String>,
         content: String,
-        fenced: bool,
     },
     ThematicBreak,
     Table {

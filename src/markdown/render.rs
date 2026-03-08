@@ -104,7 +104,6 @@ fn render_block(block: &ast::Block, out: &mut String, options: RenderOptions) {
                 out.push_str("</ul>\n");
             }
         }
-        ast::Block::ListItem { .. } => {}
         ast::Block::BlockQuote { children } => {
             out.push_str("<blockquote>");
             for child in children {
@@ -112,11 +111,7 @@ fn render_block(block: &ast::Block, out: &mut String, options: RenderOptions) {
             }
             out.push_str("</blockquote>\n");
         }
-        ast::Block::CodeBlock {
-            info,
-            content,
-            fenced: _,
-        } => {
+        ast::Block::CodeBlock { info, content } => {
             if let Some(language) = info
                 .as_deref()
                 .and_then(extract_code_block_language)

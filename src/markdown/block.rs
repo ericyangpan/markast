@@ -187,17 +187,6 @@ fn prescan_reference_definition(
     Some((id, def, 1))
 }
 
-pub(crate) fn parse_blocks(input: &str, gfm: bool, pedantic: bool) -> ast::Document {
-    let normalized = input.replace("\r\n", "\n");
-    let lines: Vec<&str> = normalized.split('\n').collect();
-    parse_blocks_from_lines_normalized(&lines, gfm, pedantic)
-}
-
-pub(crate) fn parse_lines<'a>(lines: &[Line<'a>], gfm: bool, pedantic: bool) -> ast::Document {
-    let text_lines = lines.iter().map(|line| line.text).collect::<Vec<_>>();
-    parse_blocks_from_lines_normalized(&text_lines, gfm, pedantic)
-}
-
 pub(crate) fn parse_blocks_from_lines(
     lines: &[&str],
     gfm: bool,
@@ -268,8 +257,7 @@ fn parse_blocks_from_lines_mode(
             continue;
         }
 
-        if let Some((fenced, info, consumed, closed, fence_indent)) =
-            parse_fenced_code_block(&lines, i)
+        if let Some((_, info, consumed, closed, fence_indent)) = parse_fenced_code_block(&lines, i)
         {
             let content_end = if closed {
                 consumed.saturating_sub(1)
@@ -288,11 +276,7 @@ fn parse_blocks_from_lines_mode(
             if follows_table_row && content.ends_with('\n') {
                 content.pop();
             }
-            blocks.push(ast::Block::CodeBlock {
-                info,
-                content,
-                fenced,
-            });
+            blocks.push(ast::Block::CodeBlock { info, content });
             i = consumed;
             continue;
         }
@@ -306,7 +290,6 @@ fn parse_blocks_from_lines_mode(
             blocks.push(ast::Block::CodeBlock {
                 info: None,
                 content,
-                fenced: false,
             });
             i = consumed;
             continue;
@@ -343,15 +326,6 @@ fn parse_blocks_from_lines_mode(
     }
 
     ast::Document::Nodes(blocks)
-}
-
-pub(crate) fn parse_blocks_from_lines_normalized(
-    lines: &[&str],
-    gfm: bool,
-    pedantic: bool,
-) -> ast::Document {
-    let mut ctx = BlockParseContext::new();
-    ctx.parse_lines(lines, gfm, pedantic)
 }
 
 fn parse_thematic_break(line: &str) -> Option<ast::Block> {
@@ -1033,10 +1007,6 @@ fn normalize_pedantic_list_nesting(line: &str) -> String {
     out.push_str(&" ".repeat(normalized_spaces));
     out.push_str(&line[space_count..]);
     out
-}
-
-fn strip_list_marker_padding(rest: &str) -> &str {
-    strip_list_marker_padding_with_cols(rest, 0).0
 }
 
 fn strip_list_marker_padding_with_cols(rest: &str, marker_cols: usize) -> (&str, usize) {
@@ -2302,15 +2272,6 @@ fn parse_reference_definition_with_continuation(
         end += 1;
     }
     best
-}
-
-fn parse_ref_title(raw: &str, pedantic: bool) -> Option<String> {
-    let (title, consumed) = parse_ref_title_and_consumed(raw, pedantic)?;
-    if raw[consumed..].trim().is_empty() {
-        Some(title)
-    } else {
-        None
-    }
 }
 
 fn parse_reference_definition_full(

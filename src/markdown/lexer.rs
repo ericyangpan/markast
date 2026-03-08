@@ -1,8 +1,7 @@
-use crate::markdown::{source::Source, token::SpannedToken};
+use crate::markdown::source::Source;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Line<'a> {
-    pub(crate) number: usize,
     pub(crate) text: &'a str,
 }
 
@@ -17,33 +16,12 @@ impl<'a> LineScanner<'a> {
             .as_str()
             .split('\n')
             .enumerate()
-            .map(|(index, text)| Line {
-                number: index,
-                text,
-            })
+            .map(|(_, text)| Line { text })
             .collect();
         Self { lines }
     }
 
-    pub(crate) fn line_count(&self) -> usize {
-        self.lines.len()
-    }
-
-    pub(crate) fn get(&self, index: usize) -> Option<&str> {
-        self.lines.get(index).map(|line| line.text)
-    }
-
     pub(crate) fn as_lines(&self) -> &[Line<'a>] {
         &self.lines
-    }
-
-    pub(crate) fn _to_tokens(&self) -> Vec<SpannedToken> {
-        self.lines
-            .iter()
-            .map(|line| SpannedToken {
-                token: crate::markdown::token::Token::Text(line.text.to_string()),
-                span: crate::markdown::token::Span::new(0, line.text.len()),
-            })
-            .collect()
     }
 }

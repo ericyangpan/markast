@@ -16,6 +16,7 @@ pub(crate) struct InlineParser<'a> {
 }
 
 impl<'a> InlineParser<'a> {
+    #[cfg(test)]
     pub(crate) fn new(input: &'a str, gfm: bool, pedantic: bool) -> Self {
         Self {
             input,
@@ -47,6 +48,7 @@ impl<'a> InlineParser<'a> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn parse_inline(input: &str, gfm: bool) -> Vec<Inline> {
     InlineParser::new(input, gfm, false).parse()
 }
@@ -829,92 +831,6 @@ fn starts_with(chars: &[char], i: usize, s: &str) -> bool {
         .all(|(offset, expected_c)| chars[i + offset] == *expected_c)
 }
 
-fn find_single_delimiter(chars: &[char], start: usize, marker: char) -> Option<usize> {
-    find_delimiter(chars, start, &[marker])
-}
-
-fn find_delimiter(chars: &[char], start: usize, marker: &[char]) -> Option<usize> {
-    if marker.is_empty() {
-        return None;
-    }
-
-    let mut i = start;
-    while i + marker.len() <= chars.len() {
-        if chars[i] == '[' {
-            if let Some((_, close_link, _, _)) = parse_link_like(chars, i, false) {
-                i = close_link + 1;
-                continue;
-            }
-            if let Some(close_label) = find_matching_bracket(chars, i, '[', ']') {
-                i = close_label + 1;
-                continue;
-            }
-        }
-        if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
-            if let Some((_, _, _, close_src)) = parse_image_like(chars, i + 1, false) {
-                i = close_src + 1;
-                continue;
-            }
-        }
-
-        if is_slice_match(chars, i, marker) {
-            let run_len = count_consecutive(chars, i, marker[0]);
-            if !is_delimiter_inside_code(chars, start, i)
-                && run_len >= marker.len()
-                && delimiter_run_can_close(chars, i, run_len, marker[0])
-            {
-                return Some(i);
-            }
-        }
-
-        if chars[i] == '`' {
-            let run_len = count_consecutive(chars, i, '`');
-            if marker.len() > 1 {
-                i += 1;
-                continue;
-            }
-
-            if let Some(end) = find_code_span_end(chars, i) {
-                i = end + 1;
-                continue;
-            }
-
-            i += run_len.max(1);
-            continue;
-        }
-
-        i += 1;
-    }
-    None
-}
-
-fn is_delimiter_inside_code(chars: &[char], scan_start: usize, candidate: usize) -> bool {
-    if scan_start >= candidate {
-        return false;
-    }
-
-    let mut i = scan_start;
-    while i < candidate {
-        if chars[i] == '`' {
-            let run_len = count_consecutive(chars, i, '`');
-
-            if let Some(end) = find_code_span_end(chars, i) {
-                if candidate > i && candidate <= end {
-                    return true;
-                }
-                i = end + 1;
-                continue;
-            }
-
-            i += run_len.max(1);
-            continue;
-        }
-        i += 1;
-    }
-
-    false
-}
-
 fn delimiter_run_can_open(chars: &[char], start: usize, run_len: usize, marker: char) -> bool {
     let (left_flanking, right_flanking, prev_punct, next_punct) =
         delimiter_flanking(chars, start, run_len);
@@ -1651,28 +1567,6 @@ fn parse_bare_link_destination(chars: &[char], start: usize) -> Option<(String, 
 
     let raw = chars[start..i].iter().collect::<String>();
     Some((normalize_reference_destination(&raw)?, i))
-}
-
-fn find_unescaped_char(input: &str, marker: char) -> Option<usize> {
-    let mut escaped = false;
-    for (idx, ch) in input.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == marker {
-            return Some(idx);
-        }
-    }
-    None
-}
-
-fn parse_link_title_chars(chars: &[char], start: usize) -> Option<(String, usize)> {
-    parse_link_title_chars_mode(chars, start, false)
 }
 
 fn parse_link_title_chars_mode(
