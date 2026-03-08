@@ -554,7 +554,7 @@ fn parser_blocks_pedantic_list_alignment_matches_marked_shape() {
         },
     );
 
-    assert!(html.contains("<ul><li>one\n<ul><li>two</li><li>three</li><li>four"));
+    assert!(html.contains("<ul><li>one<ul><li>two</li><li>three</li><li>four"));
     assert!(html.contains("<ul><li>five</li><li>six</li><li>seven</li></ul>"));
     assert!(!html.starts_with("<ul><li>one</li><li>two</li>"));
 }
@@ -678,7 +678,9 @@ fn parser_blocks_keep_outer_lists_tight_when_blank_lines_are_nested_deeper() {
         },
     );
 
-    assert!(html.contains("<ul><li>foo\n<ul><li>bar\n<ul><li><p>baz</p>\n<p>bim</p>\n</li></ul>\n</li></ul>\n</li></ul>"));
+    assert!(
+        html.contains("<ul><li>foo<ul><li>bar<ul><li><p>baz</p>\n<p>bim</p>\n</li></ul>\n</li></ul>\n</li></ul>")
+    );
     assert!(!html.contains("<li><p>foo</p>"));
     assert!(!html.contains("<li><p>bar</p>"));
 }
@@ -755,9 +757,7 @@ fn parser_blocks_keep_parent_lists_tight_when_only_nested_lists_are_loose() {
         },
     );
 
-    assert!(
-        html.contains("<ul><li>a\n<ul><li><p>b</p>\n<p>c</p>\n</li></ul>\n</li><li>d</li></ul>")
-    );
+    assert!(html.contains("<ul><li>a<ul><li><p>b</p>\n<p>c</p>\n</li></ul>\n</li><li>d</li></ul>"));
     assert!(!html.contains("<li><p>a</p>"));
     assert!(!html.contains("<li><p>d</p>"));
 }

@@ -44,6 +44,7 @@
     "test:compat:runtime": "cargo test --test compat_runtime",
     "test:compat:runtime:update-xfail": "MARKRS_WRITE_RUNTIME_XFAIL=1 cargo test --test compat_runtime -- --nocapture",
     "test:compat:runtime-drift": "node scripts/check-marked-runtime-drift.mjs",
+    "test:compat:report": "node scripts/compat-report.mjs",
     "check": "cargo check",
     "sync:npm-versions": "node scripts/sync-npm-versions.mjs",
     "check:npm-versions": "node scripts/check-npm-versions.mjs"

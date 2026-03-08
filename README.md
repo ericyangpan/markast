@@ -61,6 +61,7 @@ npm run test:own
 npm run test:compat:snapshot
 npm run test:compat:runtime
 npm run test:compat
+npm run test:compat:report
 npm run build
 ```
 
@@ -92,6 +93,33 @@ Refresh the runtime xfail baseline after intentional parser behavior changes:
 ```bash
 npm run test:compat:runtime:update-xfail
 ```
+
+## Compatibility Report
+
+Current report date: 2026-03-08
+
+This table compares the same parser-output cases from the official marked corpus under `third_party/marked/test/specs`.
+
+Included in the same-case comparison:
+- `new` + `original` fixture pairs: 153
+- CommonMark JSON examples: 652
+- GFM CommonMark mirror examples: 652
+- GFM spec examples: 28
+- Total comparable cases: 1485
+
+Excluded from this table:
+- `third_party/marked/test/unit/*.test.js`: 158 JS unit cases. These exercise Marked's JS API surface such as hooks, lexer/parser classes, CLI integration, and instance behavior, so there is no 1:1 Rust-side case mapping in `markrs` yet.
+- `third_party/marked/test/specs/redos`: 7 ReDoS fixtures. These are security/performance-oriented fixtures and are not currently part of the `markrs` compat gates.
+
+| Target | Case source | Passed | Gaps | Pass rate |
+| --- | --- | ---: | ---: | ---: |
+| `marked` self-spec result | vendored `marked` fixture/spec corpus | 1485 | 0 | 100.0% |
+| `markrs` snapshot compat | vendored fixture/spec snapshots | 1449 | 36 | 97.6% |
+| `markrs` runtime compat | current `marked@17.0.4` runtime | 1353 | 132 | 91.1% |
+
+How to refresh:
+- `npm run test:compat`
+- `npm run test:compat:report`
 
 ## Release
 

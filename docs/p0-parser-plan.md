@@ -884,3 +884,24 @@ Status update (2026-03-08, E27 current-marked runtime gate added):
 - planning notes after this batch:
   - if the goal is upstream-current parity, the next reduction pass should come from `tests/compat/runtime_xfail.yaml`, not from `tests/compat/xfail.yaml`
   - `npm run test:compat:runtime-drift` remains useful to identify stale vendored snapshot entries, but it is no longer a substitute for measuring actual runtime compatibility
+
+Status update (2026-03-08, E28 tight-list runtime whitespace batch complete):
+
+- snapshot baseline moved from `19` to `36`
+- runtime baseline moved from `150` to `132`
+- completed in this batch:
+  - tight list rendering no longer inserts an extra separator between the first paragraph payload and following block children, which matches current `marked@17.0.4` for nested sublists, headings, and several task-list block combinations
+  - added direct renderer coverage for tight-list block joining and updated own rendering coverage to assert the no-separator heading form
+  - snapshot-only regressions that now intentionally diverge from current runtime were marked `ignored` in `tests/parser_regressions.rs` instead of continuing to block runtime-oriented work under the old vendored target
+  - snapshot/runtime baselines were both refreshed after the renderer change
+- notable recovered runtime cases from this batch:
+  - `new/em_list_links.md`
+  - `new/list_align_pedantic.md`
+  - `new/list_code_header.md`
+  - `new/list_item_empty.md`
+  - `new/nested_blockquote_in_list.md`
+  - CommonMark mirror examples `9`, `294`, `296`, `307`, `319`, `323`
+  - GFM mirror examples `9`, `294`, `296`, `307`, `319`, `323`
+  - `test/specs/gfm/gfm.0.29.json#example-10`
+- planning notes after this batch:
+  - the next high-yield runtime clusters are now the indentation-preservation family (`example-2`, `113`, `133`, `222-226`, `241`, `new/toplevel_paragraphs`, `new/indented_tables`, `original/tabs`) and the attribute/autolink entity family (`original/amps_and_angles_encoding`, `original/auto_links`)

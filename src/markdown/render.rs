@@ -212,10 +212,13 @@ fn render_tight_list_item(
     }
 }
 
-fn render_tight_list_separator(prev_child: &ast::Block, next_child: &ast::Block, out: &mut String) {
+fn render_tight_list_separator(
+    prev_child: &ast::Block,
+    next_child: &ast::Block,
+    _out: &mut String,
+) {
     match (prev_child, next_child) {
-        (ast::Block::Paragraph { .. }, ast::Block::Heading { .. }) => out.push(' '),
-        (ast::Block::Paragraph { .. }, _) => out.push('\n'),
+        (ast::Block::Paragraph { .. }, _) => {}
         _ => {}
     }
 }
@@ -904,5 +907,30 @@ mod tests {
         let mut out = String::new();
         render_block(&node, &mut out, RenderOptions::default());
         assert_eq!(out, "<ol start=\"2\"><li>two</li></ol>\n");
+    }
+
+    #[test]
+    fn renders_tight_list_without_separator_before_following_blocks() {
+        let node = ast::Block::List {
+            ordered: false,
+            start: 1,
+            tight: true,
+            items: vec![ast::ListItem {
+                children: vec![
+                    ast::Block::Paragraph {
+                        inlines: vec![ast::inline::Inline::Text("list".to_string())],
+                    },
+                    ast::Block::Heading {
+                        level: 1,
+                        inlines: vec![ast::inline::Inline::Text("header".to_string())],
+                    },
+                ],
+                task: None,
+            }],
+        };
+
+        let mut out = String::new();
+        render_block(&node, &mut out, RenderOptions::default());
+        assert_eq!(out, "<ul><li>list<h1>header</h1>\n</li></ul>\n");
     }
 }

@@ -92,11 +92,11 @@ fn own_parenthesized_ordered_list_is_parsed() {
 }
 
 #[test]
-fn own_tight_list_item_joins_heading_with_single_space() {
+fn own_tight_list_item_joins_heading_without_separator() {
     let md = "- list\n  # header\n";
     let html = render_markdown_to_html(md, RenderOptions::default());
 
-    assert!(html.contains("<li>list <h1>header</h1>\n</li>"));
+    assert!(html.contains("<li>list<h1>header</h1>\n</li>"));
 }
 
 #[test]
