@@ -1,13 +1,13 @@
 mod compat_support;
+mod test_support;
 
 use std::collections::{BTreeSet, HashMap};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use compat_support::{
-    build_pattern_matcher, collect_all_compat_cases, load_xfail_config, normalize_html,
-    write_xfail,
+    build_pattern_matcher, collect_all_compat_cases, load_xfail_config, normalize_html, write_xfail,
 };
 use markrs::render_markdown_to_html;
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ struct RuntimeCompatRenderedCase {
 }
 
 fn render_marked_runtime(
-    repo_root: &PathBuf,
+    repo_root: &Path,
     cases: &[(String, String, RuntimeCompatOptions)],
 ) -> RuntimeCompatResponse {
     let payload: Vec<RuntimeCompatCase<'_>> = cases
@@ -90,19 +90,19 @@ fn render_marked_runtime(
 
 #[test]
 fn marked_runtime_compatibility_suite() {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = test_support::repo_root();
     let xfail_path = repo_root.join("tests/compat/runtime_xfail.yaml");
-    let ignore_xfail = std::env::var("MARKRS_IGNORE_RUNTIME_XFAIL")
-        .ok()
-        .as_deref()
-        == Some("1");
+    let ignore_xfail = std::env::var("MARKRS_IGNORE_RUNTIME_XFAIL").ok().as_deref() == Some("1");
     let print_diffs = std::env::var("MARKRS_PRINT_RUNTIME_DIFFS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(0);
 
     let cases = collect_all_compat_cases(&repo_root);
-    assert!(!cases.is_empty(), "no marked runtime compatibility cases found");
+    assert!(
+        !cases.is_empty(),
+        "no marked runtime compatibility cases found"
+    );
 
     let runtime_cases: Vec<(String, String, RuntimeCompatOptions)> = cases
         .iter()
@@ -174,11 +174,7 @@ fn marked_runtime_compatibility_suite() {
         }
     }
 
-    if std::env::var("MARKRS_WRITE_RUNTIME_XFAIL")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
+    if std::env::var("MARKRS_WRITE_RUNTIME_XFAIL").ok().as_deref() == Some("1") {
         let mut baseline = failures.clone();
         baseline.extend(xfailed.clone());
         baseline.sort();
@@ -200,7 +196,10 @@ fn marked_runtime_compatibility_suite() {
     }
 
     if !mismatch_samples.is_empty() {
-        eprintln!("runtime compat mismatch samples against marked@{}:", runtime.marked_version);
+        eprintln!(
+            "runtime compat mismatch samples against marked@{}:",
+            runtime.marked_version
+        );
         for (id, expected, actual, is_xfail) in &mismatch_samples {
             let state = if *is_xfail { "xfail" } else { "fail" };
             eprintln!("--- [{state}] {id}");

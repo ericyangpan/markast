@@ -1,7 +1,7 @@
 mod compat_support;
+mod test_support;
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
 
 use compat_support::{
     build_pattern_matcher, collect_all_compat_cases, load_xfail_config, normalize_html,
@@ -22,7 +22,7 @@ fn compat_commonmark_mirror_cases_do_not_force_gfm() {
 
 #[test]
 fn marked_snapshot_compatibility_suite() {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = test_support::repo_root();
     let xfail_path = repo_root.join("tests/compat/xfail.yaml");
     let ignore_xfail = std::env::var("MARKRS_IGNORE_XFAIL").ok().as_deref() == Some("1");
     let print_diffs = std::env::var("MARKRS_PRINT_DIFFS")
@@ -31,7 +31,10 @@ fn marked_snapshot_compatibility_suite() {
         .unwrap_or(0);
 
     let cases = collect_all_compat_cases(&repo_root);
-    assert!(!cases.is_empty(), "no marked snapshot compatibility cases found");
+    assert!(
+        !cases.is_empty(),
+        "no marked snapshot compatibility cases found"
+    );
 
     let xfail = load_xfail_config(&xfail_path);
     let pattern_matcher = build_pattern_matcher(&xfail.patterns);

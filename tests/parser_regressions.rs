@@ -1,5 +1,6 @@
+mod test_support;
+
 use std::fs;
-use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use markrs::{RenderOptions, render_markdown_to_html};
@@ -18,7 +19,7 @@ static TEXT_BEFORE_BLOCKQUOTE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"([^\s>])\s+<blockquote>").expect("invalid regex"));
 
 fn compat_fixture_pair(name: &str) -> (String, String) {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = test_support::repo_root();
     let md = fs::read_to_string(
         root.join("third_party/marked/test/specs/new")
             .join(format!("{name}.md")),
@@ -33,7 +34,7 @@ fn compat_fixture_pair(name: &str) -> (String, String) {
 }
 
 fn compat_original_fixture_pair(name: &str) -> (String, String) {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = test_support::repo_root();
     let md = fs::read_to_string(
         root.join("third_party/marked/test/specs/original")
             .join(format!("{name}.md")),
@@ -48,7 +49,7 @@ fn compat_original_fixture_pair(name: &str) -> (String, String) {
 }
 
 fn commonmark_example_pair(example: u64) -> (String, String) {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = test_support::repo_root();
     let raw = fs::read_to_string(
         root.join("third_party/marked/test/specs/commonmark/commonmark.0.31.2.json"),
     )
@@ -76,7 +77,7 @@ fn commonmark_example_pair(example: u64) -> (String, String) {
 }
 
 fn gfm_example_pair(example: u64) -> (String, String) {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = test_support::repo_root();
     let raw = fs::read_to_string(root.join("third_party/marked/test/specs/gfm/gfm.0.29.json"))
         .unwrap_or_else(|e| panic!("failed reading gfm fixture index: {e}"));
     let examples: Value =

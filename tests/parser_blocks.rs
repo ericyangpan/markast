@@ -678,9 +678,9 @@ fn parser_blocks_keep_outer_lists_tight_when_blank_lines_are_nested_deeper() {
         },
     );
 
-    assert!(
-        html.contains("<ul><li>foo<ul><li>bar<ul><li><p>baz</p>\n<p>bim</p>\n</li></ul>\n</li></ul>\n</li></ul>")
-    );
+    assert!(html.contains(
+        "<ul><li>foo<ul><li>bar<ul><li><p>baz</p>\n<p>bim</p>\n</li></ul>\n</li></ul>\n</li></ul>"
+    ));
     assert!(!html.contains("<li><p>foo</p>"));
     assert!(!html.contains("<li><p>bar</p>"));
 }
