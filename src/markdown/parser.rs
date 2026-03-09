@@ -13,11 +13,16 @@ pub(crate) fn parse_document(
     options: RenderOptions,
 ) -> crate::markdown::ast::Document {
     let parser_options = ParserOptions::from(options);
-    let source = Source::new(input);
-    if source.is_empty() {
+    if input.is_empty() {
         return crate::markdown::ast::Document::Nodes(Vec::new());
     }
 
+    if !input.contains(['\n', '\r']) {
+        let mut ctx = block::BlockParseContext::new();
+        return ctx.parse_lines(&[input], parser_options.gfm, parser_options.pedantic);
+    }
+
+    let source = Source::new(input);
     let scanner = LineScanner::new(&source);
     parse_with_scanner(&scanner, parser_options)
 }

@@ -1,19 +1,21 @@
+use std::borrow::Cow;
+
 #[derive(Debug, Clone)]
-pub(crate) struct Source {
-    normalized: String,
+pub(crate) struct Source<'a> {
+    normalized: Cow<'a, str>,
 }
 
-impl Source {
-    pub(crate) fn new(input: &str) -> Self {
-        let normalized = input.replace("\r\n", "\n");
+impl<'a> Source<'a> {
+    pub(crate) fn new(input: &'a str) -> Self {
+        let normalized = if input.contains("\r\n") {
+            Cow::Owned(input.replace("\r\n", "\n"))
+        } else {
+            Cow::Borrowed(input)
+        };
         Self { normalized }
     }
 
     pub(crate) fn as_str(&self) -> &str {
         &self.normalized
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.normalized.is_empty()
     }
 }

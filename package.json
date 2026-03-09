@@ -48,7 +48,8 @@
     "check": "cargo check",
     "check:strict": "node scripts/check-strict.mjs",
     "sync:npm-versions": "node scripts/sync-npm-versions.mjs",
-    "check:npm-versions": "node scripts/check-npm-versions.mjs"
+    "check:npm-versions": "node scripts/check-npm-versions.mjs",
+    "bench": "node scripts/benchmark.mjs --write-readme"
   },
   "keywords": [
     "markdown",
@@ -59,5 +60,12 @@
   ],
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "markdown-it": "^14.1.1",
+    "marked": "17.0.4",
+    "remark": "15.0.1",
+    "remark-gfm": "4.0.1",
+    "remark-html": "16.0.1"
   }
 }

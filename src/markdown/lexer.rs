@@ -11,7 +11,7 @@ pub(crate) struct LineScanner<'a> {
 }
 
 impl<'a> LineScanner<'a> {
-    pub(crate) fn new(source: &'a Source) -> Self {
+    pub(crate) fn new(source: &'a Source<'a>) -> Self {
         let lines = source
             .as_str()
             .split('\n')

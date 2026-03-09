@@ -9,11 +9,14 @@ pub(crate) struct ReferenceDefinition {
     pub(crate) title: Option<String>,
 }
 
-pub(crate) fn normalize_reference_label(label: &str) -> String {
-    let mut unescaped = String::with_capacity(label.len());
+pub(crate) fn try_normalize_reference_label(label: &str) -> Option<String> {
+    let mut out = String::with_capacity(label.len());
     let mut chars = label.chars().peekable();
+    let mut pending_space = false;
+    let mut escaped_for_validation = false;
 
     while let Some(ch) = chars.next() {
+        let current_escaped = std::mem::take(&mut escaped_for_validation);
         if ch == '\\' {
             match chars.peek().copied() {
                 Some('\n') => {
@@ -27,58 +30,45 @@ pub(crate) fn normalize_reference_label(label: &str) -> String {
                     }
                     continue;
                 }
-                None => {
-                    unescaped.push(ch);
-                    continue;
-                }
-                Some(_) => {
-                    unescaped.push(ch);
-                    continue;
-                }
+                _ if !current_escaped => escaped_for_validation = true,
+                _ => {}
             }
+        } else if ch == '[' && !current_escaped {
+            return None;
         }
 
-        if ch == '\r' {
+        let normalized = if ch == '\\' {
+            '\\'
+        } else if ch == '\r' {
             if chars.peek().copied() == Some('\n') {
                 chars.next();
             }
-            unescaped.push(' ');
+            ' '
+        } else {
+            ch
+        };
+
+        if normalized.is_whitespace() {
+            pending_space = !out.is_empty();
             continue;
         }
 
-        unescaped.push(ch);
+        if pending_space {
+            out.push(' ');
+            pending_space = false;
+        }
+
+        match normalized {
+            'ß' | 'ẞ' => out.push_str("ss"),
+            _ => out.extend(normalized.to_lowercase()),
+        }
     }
 
-    let folded: String = unescaped
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .flat_map(|ch| match ch {
-            'ß' | 'ẞ' => "ss".chars().collect::<Vec<_>>(),
-            _ => ch.to_lowercase().collect(),
-        })
-        .collect();
-    folded
+    if out.is_empty() { None } else { Some(out) }
 }
 
-pub(crate) fn is_valid_reference_label(label: &str) -> bool {
-    if normalize_reference_label(label).is_empty() {
-        return false;
-    }
-
-    let mut chars = label.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            chars.next();
-            continue;
-        }
-        if ch == '[' {
-            return false;
-        }
-    }
-
-    true
+pub(crate) fn normalize_reference_label(label: &str) -> String {
+    try_normalize_reference_label(label).unwrap_or_default()
 }
 
 #[derive(Debug, Default)]
@@ -99,21 +89,26 @@ impl BlockParseContext {
         gfm: bool,
         pedantic: bool,
     ) -> ast::Document {
-        let mut i = 0usize;
-        while i < lines.len() {
-            if should_skip_prescan_ref_definition(lines, i, pedantic) {
+        let allow_ref_defs = has_potential_reference_definition(lines);
+
+        if allow_ref_defs {
+            let mut i = 0usize;
+            while i < lines.len() {
+                if should_skip_prescan_ref_definition(lines, i, pedantic) {
+                    i += 1;
+                    continue;
+                }
+                if let Some((id, def, consumed)) = prescan_reference_definition(lines, i, pedantic)
+                {
+                    self.refs.entry(id).or_insert(def);
+                    i += consumed;
+                    continue;
+                }
                 i += 1;
-                continue;
             }
-            if let Some((id, def, consumed)) = prescan_reference_definition(lines, i, pedantic) {
-                self.refs.entry(id).or_insert(def);
-                i += consumed;
-                continue;
-            }
-            i += 1;
         }
 
-        parse_blocks_from_lines(lines, gfm, pedantic, &mut self.refs)
+        parse_blocks_from_lines_mode(lines, gfm, pedantic, &mut self.refs, allow_ref_defs)
     }
 
     pub(crate) fn parse_line_slices<'a>(
@@ -129,6 +124,21 @@ impl BlockParseContext {
 
 const FORCED_PARAGRAPH_PREFIX: char = '\u{001e}';
 const LAZY_QUOTE_PREFIX: char = '\u{001f}';
+
+fn has_potential_reference_definition(lines: &[&str]) -> bool {
+    lines
+        .iter()
+        .copied()
+        .any(line_has_potential_reference_definition)
+}
+
+fn line_has_potential_reference_definition(line: &str) -> bool {
+    let mut current = line.trim_start_matches([' ', '\t']);
+    while let Some(rest) = current.strip_prefix('>') {
+        current = rest.trim_start_matches([' ', '\t']);
+    }
+    current.starts_with('[')
+}
 
 fn should_skip_prescan_ref_definition(lines: &[&str], idx: usize, pedantic: bool) -> bool {
     if idx == 0 || idx >= lines.len() {
@@ -193,7 +203,13 @@ pub(crate) fn parse_blocks_from_lines(
     pedantic: bool,
     refs: &mut HashMap<String, ReferenceDefinition>,
 ) -> ast::Document {
-    parse_blocks_from_lines_mode(lines, gfm, pedantic, refs, true)
+    parse_blocks_from_lines_mode(
+        lines,
+        gfm,
+        pedantic,
+        refs,
+        has_potential_reference_definition(lines),
+    )
 }
 
 fn parse_blocks_from_lines_mode(
@@ -234,7 +250,7 @@ fn parse_blocks_from_lines_mode(
                 .iter()
                 .map(std::string::String::as_str)
                 .collect::<Vec<_>>();
-            let quote_doc = parse_blocks_from_lines_mode(&quote_lines, gfm, pedantic, refs, true);
+            let quote_doc = parse_blocks_from_lines(&quote_lines, gfm, pedantic, refs);
             let children = match quote_doc {
                 ast::Document::Nodes(nodes) => nodes,
             };
@@ -876,9 +892,16 @@ fn parse_list_item(
         }
     }
 
-    let body = item_lines.join("\n");
-    let child_lines = body.lines().collect::<Vec<_>>();
-    let children = match parse_blocks_from_lines_mode(&child_lines, gfm, pedantic, refs, true) {
+    let child_line_len = if item_lines.last().is_some_and(|line| line.is_empty()) {
+        item_lines.len().saturating_sub(1)
+    } else {
+        item_lines.len()
+    };
+    let child_line_refs = item_lines[..child_line_len]
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let children = match parse_blocks_from_lines(&child_line_refs, gfm, pedantic, refs) {
         ast::Document::Nodes(nodes) => nodes,
     };
 
@@ -2289,9 +2312,7 @@ fn parse_reference_definition_full(
 
     let close = trimmed_start.find("]:")?;
     let label = trimmed_start[1..close].trim();
-    if !is_valid_reference_label(label) {
-        return None;
-    }
+    let key = try_normalize_reference_label(label)?;
 
     let rest = skip_reference_whitespace(&trimmed_start[close + 2..])?;
     if rest.is_empty() {
@@ -2315,7 +2336,6 @@ fn parse_reference_definition_full(
         Some(title)
     };
 
-    let key = normalize_reference_label(label);
     Some((key, ReferenceDefinition { href, title }))
 }
 

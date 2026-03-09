@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use crate::markdown::{
     ast::inline::Inline,
     block::{
-        ReferenceDefinition, decode_html_entities, is_valid_reference_label,
-        normalize_reference_destination, normalize_reference_label, parse_html_entity,
+        ReferenceDefinition, decode_html_entities, normalize_reference_destination,
+        normalize_reference_label, parse_html_entity, try_normalize_reference_label,
     },
 };
 
@@ -59,8 +59,18 @@ pub(crate) fn parse_inline_with_refs(
     pedantic: bool,
     refs: Option<&HashMap<String, ReferenceDefinition>>,
 ) -> Vec<Inline> {
-    let mut out: Vec<InlinePart> = Vec::new();
-    let chars: Vec<char> = input.chars().collect();
+    if input.is_empty() {
+        return Vec::new();
+    }
+
+    if !inline_fragment_needs_parse(input) {
+        return vec![Inline::Text(normalize_inline_plain_text(input.to_string()))];
+    }
+
+    let mut chars = Vec::with_capacity(input.len());
+    chars.extend(input.chars());
+    let mut out: Vec<InlinePart> = Vec::with_capacity((chars.len() / 4).max(8));
+    let mut has_delimiters = false;
     let mut i = 0usize;
 
     while i < chars.len() {
@@ -95,7 +105,7 @@ pub(crate) fn parse_inline_with_refs(
             }
 
             if i + 1 < chars.len() && chars[i + 1] == '<' {
-                push_inline_part(&mut out, InlinePart::Node(Inline::Text("\n".to_string())));
+                push_inline_text_char(&mut out, '\n');
                 i += 1;
                 continue;
             }
@@ -114,15 +124,12 @@ pub(crate) fn parse_inline_with_refs(
                 }
 
                 if is_escapable(chars[i + 1]) {
-                    push_inline_part(
-                        &mut out,
-                        InlinePart::Node(Inline::Text(chars[i + 1].to_string())),
-                    );
+                    push_inline_part(&mut out, inline_text_part_from_char(chars[i + 1]));
                     i += 2;
                     continue;
                 }
             }
-            push_inline_part(&mut out, InlinePart::Node(Inline::Text("\\".to_string())));
+            push_inline_text_char(&mut out, '\\');
             i += 1;
             continue;
         }
@@ -146,7 +153,7 @@ pub(crate) fn parse_inline_with_refs(
             if let Some(close) = parse_raw_html(&chars, i) {
                 push_inline_part(
                     &mut out,
-                    InlinePart::Node(Inline::RawHtml(chars[i..close].iter().collect())),
+                    InlinePart::Node(Inline::RawHtml(chars_to_string(&chars[i..close]))),
                 );
                 i = close;
                 continue;
@@ -154,10 +161,7 @@ pub(crate) fn parse_inline_with_refs(
         }
 
         if let Some((href, label, close)) = parse_quoted_autolink_like(&chars, i) {
-            push_inline_part(
-                &mut out,
-                InlinePart::Node(Inline::Text(chars[i].to_string())),
-            );
+            push_inline_part(&mut out, inline_text_part_from_char(chars[i]));
             push_inline_part(
                 &mut out,
                 InlinePart::Node(Inline::Link {
@@ -171,6 +175,7 @@ pub(crate) fn parse_inline_with_refs(
         }
 
         if let Some((delimiter, run_len)) = parse_delimiter_run(&chars, i, gfm) {
+            has_delimiters |= matches!(delimiter, InlinePart::Delimiter { .. });
             push_inline_part(&mut out, delimiter);
             i += run_len;
             continue;
@@ -181,7 +186,7 @@ pub(crate) fn parse_inline_with_refs(
             if open_len > 1 && parse_code_span(&chars, i).is_none() {
                 push_inline_part(
                     &mut out,
-                    InlinePart::Node(Inline::Text(chars[i..i + open_len].iter().collect())),
+                    InlinePart::Node(Inline::Text(chars_to_string(&chars[i..i + open_len]))),
                 );
                 i += open_len;
                 continue;
@@ -201,7 +206,7 @@ pub(crate) fn parse_inline_with_refs(
             if let Some((close_ref, src, title, alt)) =
                 parse_reference_image(&chars, i + 1, gfm, pedantic, refs)
             {
-                let parsed_alt = parse_inline_with_refs(&alt, gfm, pedantic, refs);
+                let parsed_alt = parse_inline_fragment(&alt, gfm, pedantic, refs);
                 push_inline_part(
                     &mut out,
                     InlinePart::Node(Inline::Image {
@@ -215,7 +220,7 @@ pub(crate) fn parse_inline_with_refs(
             }
 
             if let Some((src, alt, title, close_src)) = parse_image_like(&chars, i + 1, pedantic) {
-                let parsed_alt = parse_inline_with_refs(&alt, gfm, pedantic, refs);
+                let parsed_alt = parse_inline_fragment(&alt, gfm, pedantic, refs);
                 push_inline_part(
                     &mut out,
                     InlinePart::Node(Inline::Image {
@@ -231,7 +236,7 @@ pub(crate) fn parse_inline_with_refs(
 
         if chars[i] == '[' && !is_unescaped_image_marker(&chars, i) {
             if let Some((href, close_link, label, title)) = parse_link_like(&chars, i, pedantic) {
-                let parsed_label = parse_inline_with_refs(&label, gfm, pedantic, refs);
+                let parsed_label = parse_inline_fragment(&label, gfm, pedantic, refs);
                 if inline_nodes_contain_link(&parsed_label) {
                     // Links cannot contain other links. Fall back to literal text so inner links survive.
                 } else {
@@ -251,7 +256,7 @@ pub(crate) fn parse_inline_with_refs(
             if let Some((close_link, href, title, label)) =
                 parse_reference_link(&chars, i, gfm, pedantic, refs)
             {
-                let parsed_label = parse_inline_with_refs(&label, gfm, pedantic, refs);
+                let parsed_label = parse_inline_fragment(&label, gfm, pedantic, refs);
                 if inline_nodes_contain_link(&parsed_label) {
                     // Reference links follow the same no-links-inside-links rule.
                 } else {
@@ -270,15 +275,14 @@ pub(crate) fn parse_inline_with_refs(
         }
 
         if chars[i] == '&' {
-            let tail = chars[i..].iter().collect::<String>();
-            if let Some((decoded, consumed)) = parse_html_entity(&tail) {
+            if let Some((decoded, consumed_chars)) = parse_html_entity_chars(&chars, i) {
                 push_inline_part(&mut out, InlinePart::Node(Inline::Text(decoded)));
-                i += tail[..consumed].chars().count();
+                i += consumed_chars;
                 continue;
             }
         }
 
-        let mut plain = String::new();
+        let mut plain = String::with_capacity((chars.len() - i).min(32));
         while i < chars.len() {
             if chars[i] == '\\' && i + 1 < chars.len() && is_escapable(chars[i + 1]) {
                 plain.push(chars[i + 1]);
@@ -299,11 +303,15 @@ pub(crate) fn parse_inline_with_refs(
         }
         push_inline_part(
             &mut out,
-            InlinePart::Node(Inline::Text(normalize_inline_plain_text(&plain))),
+            InlinePart::Node(Inline::Text(normalize_inline_plain_text(plain))),
         );
     }
 
-    resolve_inline_parts(out)
+    if has_delimiters {
+        resolve_inline_parts(out)
+    } else {
+        inline_parts_into_nodes(out)
+    }
 }
 
 fn is_token_start(chars: &[char], i: usize) -> bool {
@@ -322,6 +330,32 @@ fn inline_nodes_contain_link(nodes: &[Inline]) -> bool {
         }
         Inline::Image { alt, .. } => inline_nodes_contain_link(alt),
         _ => false,
+    })
+}
+
+fn parse_inline_fragment(
+    input: &str,
+    gfm: bool,
+    pedantic: bool,
+    refs: Option<&HashMap<String, ReferenceDefinition>>,
+) -> Vec<Inline> {
+    if input.is_empty() {
+        return Vec::new();
+    }
+
+    if !inline_fragment_needs_parse(input) {
+        return vec![Inline::Text(normalize_inline_plain_text(input.to_string()))];
+    }
+
+    parse_inline_with_refs(input, gfm, pedantic, refs)
+}
+
+fn inline_fragment_needs_parse(input: &str) -> bool {
+    input.as_bytes().iter().any(|byte| {
+        matches!(
+            *byte,
+            92 | b'*' | b'_' | b'[' | b'!' | b'`' | 10 | 13 | b'~' | b'>' | b'<' | b'&'
+        )
     })
 }
 
@@ -353,6 +387,16 @@ fn push_inline_part(out: &mut Vec<InlinePart>, part: InlinePart) {
     }
 }
 
+fn inline_text_part_from_char(ch: char) -> InlinePart {
+    let mut text = String::with_capacity(ch.len_utf8());
+    text.push(ch);
+    InlinePart::Node(Inline::Text(text))
+}
+
+fn push_inline_text_char(out: &mut Vec<InlinePart>, ch: char) {
+    push_inline_part(out, inline_text_part_from_char(ch));
+}
+
 fn parse_delimiter_run(chars: &[char], start: usize, gfm: bool) -> Option<(InlinePart, usize)> {
     let marker = chars.get(start).copied()?;
     if marker != '*' && marker != '_' && !(gfm && marker == '~') {
@@ -362,7 +406,9 @@ fn parse_delimiter_run(chars: &[char], start: usize, gfm: bool) -> Option<(Inlin
     let run_len = count_consecutive(chars, start, marker);
     if marker == '~' && run_len > 2 {
         return Some((
-            InlinePart::Node(Inline::Text(chars[start..start + run_len].iter().collect())),
+            InlinePart::Node(Inline::Text(chars_to_string(
+                &chars[start..start + run_len],
+            ))),
             run_len,
         ));
     }
@@ -377,16 +423,17 @@ fn parse_delimiter_run(chars: &[char], start: usize, gfm: bool) -> Option<(Inlin
             can_close,
         }
     } else {
-        InlinePart::Node(Inline::Text(chars[start..start + run_len].iter().collect()))
+        InlinePart::Node(Inline::Text(chars_to_string(
+            &chars[start..start + run_len],
+        )))
     };
 
     Some((part, run_len))
 }
 
-fn resolve_inline_parts(parts: Vec<InlinePart>) -> Vec<Inline> {
-    let resolved = resolve_delimiter_runs(parts);
-    let mut out = Vec::new();
-    for part in resolved {
+fn inline_parts_into_nodes(parts: Vec<InlinePart>) -> Vec<Inline> {
+    let mut out = Vec::with_capacity(parts.len());
+    for part in parts {
         match part {
             InlinePart::Node(node) => push_inline_node(&mut out, node),
             InlinePart::Delimiter { marker, len, .. } => {
@@ -395,6 +442,10 @@ fn resolve_inline_parts(parts: Vec<InlinePart>) -> Vec<Inline> {
         }
     }
     out
+}
+
+fn resolve_inline_parts(parts: Vec<InlinePart>) -> Vec<Inline> {
+    inline_parts_into_nodes(resolve_delimiter_runs(parts))
 }
 
 fn push_inline_node(out: &mut Vec<Inline>, node: Inline) {
@@ -415,7 +466,7 @@ fn push_inline_node(out: &mut Vec<Inline>, node: Inline) {
 
 fn resolve_delimiter_runs(mut parts: Vec<InlinePart>) -> Vec<InlinePart> {
     loop {
-        let mut changed = false;
+        let mut matched = None;
 
         for closer_idx in 0..parts.len() {
             let InlinePart::Delimiter {
@@ -444,63 +495,71 @@ fn resolve_delimiter_runs(mut parts: Vec<InlinePart>) -> Vec<InlinePart> {
                 continue;
             };
 
-            let (opener_len, opener_original_len) = match &parts[opener_idx] {
-                InlinePart::Delimiter {
-                    len, original_len, ..
-                } => (*len, *original_len),
-                InlinePart::Node(_) => unreachable!("matched opener must be delimiter"),
-            };
-            let (opener_can_open, opener_can_close) = match &parts[opener_idx] {
-                InlinePart::Delimiter {
-                    can_open,
-                    can_close,
-                    ..
-                } => (*can_open, *can_close),
-                InlinePart::Node(_) => unreachable!("matched opener must be delimiter"),
-            };
-
-            let inner = resolve_inline_parts(parts[opener_idx + 1..closer_idx].to_vec());
-            let wrapped = match (*marker, use_len) {
-                ('~', _) => Inline::Del(inner),
-                (_, 2) => Inline::Strong(inner),
-                _ => Inline::Em(inner),
-            };
-
-            let mut next = Vec::with_capacity(parts.len());
-            next.extend(parts[..opener_idx].iter().cloned());
-
-            if opener_len > use_len {
-                next.push(InlinePart::Delimiter {
-                    marker: *marker,
-                    len: opener_len - use_len,
-                    original_len: opener_original_len,
-                    can_open: opener_can_open,
-                    can_close: opener_can_close,
-                });
-            }
-
-            next.push(InlinePart::Node(wrapped));
-
-            if *closer_len > use_len {
-                let closer_can_close = *can_close;
-                next.push(InlinePart::Delimiter {
-                    marker: *marker,
-                    len: *closer_len - use_len,
-                    original_len: *closer_original_len,
-                    can_open: *closer_can_open,
-                    can_close: closer_can_close,
-                });
-            }
-
-            next.extend(parts[closer_idx + 1..].iter().cloned());
-            parts = next;
-            changed = true;
+            matched = Some((opener_idx, closer_idx, *marker, use_len));
             break;
         }
 
-        if !changed {
+        let Some((opener_idx, closer_idx, marker, use_len)) = matched else {
             return parts;
+        };
+
+        let after = parts.split_off(closer_idx + 1);
+        let mut inner_and_closer = parts.split_off(opener_idx + 1);
+        let opener = parts.pop().expect("matched opener must exist");
+        let closer = inner_and_closer.pop().expect("matched closer must exist");
+
+        let InlinePart::Delimiter {
+            len: opener_len,
+            original_len: opener_original_len,
+            can_open: opener_can_open,
+            can_close: opener_can_close,
+            ..
+        } = opener
+        else {
+            unreachable!("matched opener must be delimiter");
+        };
+
+        let InlinePart::Delimiter {
+            len: closer_len,
+            original_len: closer_original_len,
+            can_open: closer_can_open,
+            can_close: closer_can_close,
+            ..
+        } = closer
+        else {
+            unreachable!("matched closer must be delimiter");
+        };
+
+        let inner = resolve_inline_parts(inner_and_closer);
+        let wrapped = match (marker, use_len) {
+            ('~', _) => Inline::Del(inner),
+            (_, 2) => Inline::Strong(inner),
+            _ => Inline::Em(inner),
+        };
+
+        if opener_len > use_len {
+            parts.push(InlinePart::Delimiter {
+                marker,
+                len: opener_len - use_len,
+                original_len: opener_original_len,
+                can_open: opener_can_open,
+                can_close: opener_can_close,
+            });
         }
+
+        parts.push(InlinePart::Node(wrapped));
+
+        if closer_len > use_len {
+            parts.push(InlinePart::Delimiter {
+                marker,
+                len: closer_len - use_len,
+                original_len: closer_original_len,
+                can_open: closer_can_open,
+                can_close: closer_can_close,
+            });
+        }
+
+        parts.extend(after);
     }
 }
 
@@ -821,14 +880,12 @@ fn is_html_attribute_name_char(ch: char) -> bool {
 }
 
 fn starts_with(chars: &[char], i: usize, s: &str) -> bool {
-    let expected: Vec<char> = s.chars().collect();
-    if i + expected.len() > chars.len() {
-        return false;
+    for (offset, expected_c) in s.chars().enumerate() {
+        if chars.get(i + offset) != Some(&expected_c) {
+            return false;
+        }
     }
-    expected
-        .iter()
-        .enumerate()
-        .all(|(offset, expected_c)| chars[i + offset] == *expected_c)
+    true
 }
 
 fn delimiter_run_can_open(chars: &[char], start: usize, run_len: usize, marker: char) -> bool {
@@ -968,7 +1025,7 @@ fn parse_code_span(chars: &[char], start: usize) -> Option<(String, usize)> {
     let content_start = start + open_len;
     let close = find_code_span_end(chars, start)?;
     let close_start = close + 1 - open_len;
-    let raw_code: String = chars[content_start..close_start].iter().collect();
+    let raw_code: String = chars_to_string(&chars[content_start..close_start]);
 
     let code = normalize_code_content(&raw_code);
     Some((code, close))
@@ -982,6 +1039,12 @@ fn count_consecutive(chars: &[char], start: usize, marker: char) -> usize {
     i.saturating_sub(start)
 }
 
+fn chars_to_string(chars: &[char]) -> String {
+    let mut out = String::with_capacity(chars.len());
+    out.extend(chars.iter().copied());
+    out
+}
+
 fn find_code_span_end(chars: &[char], start: usize) -> Option<usize> {
     let open_len = count_consecutive(chars, start, '`');
     if open_len == 0 || start + open_len > chars.len() {
@@ -990,7 +1053,7 @@ fn find_code_span_end(chars: &[char], start: usize) -> Option<usize> {
 
     let mut i = start + open_len;
     while i + open_len <= chars.len() {
-        if is_slice_match(chars, i, &vec!['`'; open_len]) {
+        if chars[i..i + open_len].iter().all(|ch| *ch == '`') {
             let prev_ok = i == 0 || chars[i - 1] != '`';
             let next_ok = i + open_len >= chars.len() || chars[i + open_len] != '`';
             if prev_ok && next_ok {
@@ -1003,35 +1066,52 @@ fn find_code_span_end(chars: &[char], start: usize) -> Option<usize> {
     None
 }
 fn normalize_code_content(raw: &str) -> String {
-    let mut code = raw.replace('\n', " ");
+    let mut code = if raw.contains('\n') {
+        let mut normalized = String::with_capacity(raw.len());
+        for ch in raw.chars() {
+            normalized.push(if ch == '\n' { ' ' } else { ch });
+        }
+        normalized
+    } else {
+        raw.to_string()
+    };
+
     if code.starts_with(' ') && code.ends_with(' ') && code.len() > 1 {
-        code = code[1..code.len() - 1].to_string();
+        code.drain(..1);
+        code.pop();
     }
     code
 }
 
-fn normalize_inline_plain_text(raw: &str) -> String {
-    let chars: Vec<char> = raw.chars().collect();
+fn normalize_inline_plain_text(raw: String) -> String {
+    if !raw.contains(") ") || !raw.contains('(') {
+        return raw;
+    }
+
     let mut out = String::with_capacity(raw.len());
-    let mut i = 0usize;
-
-    while i < chars.len() {
-        if chars[i] == ')' {
-            let mut j = i + 1;
-            while j < chars.len() && chars[j] == ' ' {
-                j += 1;
-            }
-
-            if j > i + 1 && j < chars.len() && chars[j] == '(' {
-                out.push(')');
-                out.push(' ');
-                i = j;
-                continue;
-            }
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != ')' {
+            out.push(ch);
+            continue;
         }
 
-        out.push(chars[i]);
-        i += 1;
+        let mut spaces = 0usize;
+        while chars.peek() == Some(&' ') {
+            chars.next();
+            spaces += 1;
+        }
+
+        if spaces > 0 && chars.peek() == Some(&'(') {
+            out.push(')');
+            out.push(' ');
+            continue;
+        }
+
+        out.push(')');
+        for _ in 0..spaces {
+            out.push(' ');
+        }
     }
 
     out
@@ -1046,7 +1126,7 @@ fn parse_autolink_like(chars: &[char], start: usize) -> Option<(String, String, 
         return None;
     }
 
-    let inner = chars[start + 1..close].iter().collect::<String>();
+    let inner = chars_to_string(&chars[start + 1..close]);
     let trimmed = inner.trim();
     if trimmed.is_empty()
         || inner != trimmed
@@ -1115,7 +1195,7 @@ fn parse_quoted_autolink_like(chars: &[char], start: usize) -> Option<(String, S
     let mut close = chars.len();
     while close > start + 1 {
         if chars[close - 1] == quote {
-            let inner: String = chars[start + 1..close - 1].iter().collect();
+            let inner: String = chars_to_string(&chars[start + 1..close - 1]);
             if inner.is_empty()
                 || inner.contains(' ')
                 || inner.contains('\n')
@@ -1137,16 +1217,6 @@ fn parse_quoted_autolink_like(chars: &[char], start: usize) -> Option<(String, S
     }
 
     None
-}
-
-fn is_slice_match(chars: &[char], i: usize, marker: &[char]) -> bool {
-    if i + marker.len() > chars.len() {
-        return false;
-    }
-    marker
-        .iter()
-        .enumerate()
-        .all(|(offset, c)| chars[i + offset] == *c)
 }
 
 fn is_autolink_uri(raw: &str) -> bool {
@@ -1219,7 +1289,7 @@ fn parse_link_like(
         return None;
     }
     let (href, title, close_href) = parse_inline_link_target(chars, close_label + 2, pedantic)?;
-    let label = chars[start + 1..close_label].iter().collect::<String>();
+    let label = chars_to_string(&chars[start + 1..close_label]);
     Some((href, close_href, label, title))
 }
 
@@ -1235,7 +1305,7 @@ fn parse_reference_link(
         return None;
     }
     let close_label = find_matching_bracket(chars, start, '[', ']')?;
-    let label = chars[start + 1..close_label].iter().collect::<String>();
+    let label = chars_to_string(&chars[start + 1..close_label]);
     let candidate_ref = label.trim();
 
     let mut next = close_label + 1;
@@ -1254,13 +1324,9 @@ fn parse_reference_link(
             (candidate_ref.to_string(), label_start)
         } else {
             let close = find_matching_bracket(chars, next, '[', ']')?;
-            (chars[label_start..close].iter().collect::<String>(), close)
+            (chars_to_string(&chars[label_start..close]), close)
         };
-        if !is_valid_reference_label(&ref_label) {
-            return None;
-        }
-
-        let normalized = normalize_reference_label(&ref_label);
+        let normalized = try_normalize_reference_label(&ref_label)?;
         if let Some(def) =
             refs.and_then(|m: &HashMap<String, ReferenceDefinition>| m.get(&normalized))
         {
@@ -1291,7 +1357,7 @@ fn parse_reference_image(
     }
 
     let close_alt = find_matching_bracket(chars, start, '[', ']')?;
-    let alt = chars[start + 1..close_alt].iter().collect::<String>();
+    let alt = chars_to_string(&chars[start + 1..close_alt]);
     let candidate_ref = alt.trim();
 
     let mut next = close_alt + 1;
@@ -1306,13 +1372,9 @@ fn parse_reference_image(
             (candidate_ref.to_string(), label_start)
         } else {
             let close = find_matching_bracket(chars, next, '[', ']')?;
-            (chars[label_start..close].iter().collect::<String>(), close)
+            (chars_to_string(&chars[label_start..close]), close)
         };
-        if !is_valid_reference_label(&ref_label) {
-            return None;
-        }
-
-        let normalized = normalize_reference_label(&ref_label);
+        let normalized = try_normalize_reference_label(&ref_label)?;
         if let Some(def) = refs.and_then(|m| m.get(&normalized)) {
             return Some((close_ref, def.href.clone(), def.title.clone(), alt));
         }
@@ -1341,7 +1403,7 @@ fn parse_image_like(
         return None;
     }
     let (src, title, close_src) = parse_inline_link_target(chars, close_alt + 2, pedantic)?;
-    let alt = chars[start + 1..close_alt].iter().collect::<String>();
+    let alt = chars_to_string(&chars[start + 1..close_alt]);
     Some((src, alt, title, close_src))
 }
 
@@ -1404,7 +1466,7 @@ fn parse_pedantic_bare_link_target(
     start: usize,
 ) -> Option<(String, Option<String>, usize)> {
     let close = find_pedantic_link_target_end(chars, start)?;
-    let inner = chars[start..close].iter().collect::<String>();
+    let inner = chars_to_string(&chars[start..close]);
     let trimmed = inner.trim_start();
     if trimmed.is_empty() {
         return Some((String::new(), None, close));
@@ -1518,7 +1580,7 @@ fn parse_angle_link_destination(
         return None;
     }
 
-    let mut raw = chars[start + 1..close].iter().collect::<String>();
+    let mut raw = chars_to_string(&chars[start + 1..close]);
     if raw.ends_with('>') {
         raw.pop();
     }
@@ -1565,7 +1627,7 @@ fn parse_bare_link_destination(chars: &[char], start: usize) -> Option<(String, 
         return None;
     }
 
-    let raw = chars[start..i].iter().collect::<String>();
+    let raw = chars_to_string(&chars[start..i]);
     Some((normalize_reference_destination(&raw)?, i))
 }
 
@@ -1574,16 +1636,7 @@ fn parse_link_title_chars_mode(
     start: usize,
     pedantic: bool,
 ) -> Option<(String, usize)> {
-    let _ = *chars.get(start)?;
-    let raw = chars[start..].iter().collect::<String>();
-    let (title, consumed) = parse_link_title_str(&raw, pedantic)?;
-    let consumed_chars = raw[..consumed].chars().count();
-    Some((title, start + consumed_chars))
-}
-
-fn parse_link_title_str(raw: &str, pedantic: bool) -> Option<(String, usize)> {
-    let chars = raw.chars().collect::<Vec<_>>();
-    let quote = *chars.first()?;
+    let quote = *chars.get(start)?;
     let close = match quote {
         '"' | '\'' => quote,
         '(' => ')',
@@ -1591,45 +1644,146 @@ fn parse_link_title_str(raw: &str, pedantic: bool) -> Option<(String, usize)> {
     };
 
     let end = if pedantic && matches!(quote, '"' | '\'') {
-        find_last_unescaped_title_close(&chars, close)?
+        find_last_unescaped_title_close_chars(chars, start, close)?
     } else {
-        find_first_unescaped_title_close(&chars, close)?
+        find_first_unescaped_title_close_chars(chars, start, close)?
     };
 
-    let title = decode_html_entities(&unescape_inline(chars[1..end].iter().collect::<String>()));
-    let consumed = chars[..=end].iter().collect::<String>().len();
+    let title = decode_html_entities(&unescape_inline(&chars_to_string(&chars[start + 1..end])));
+    Some((title, end + 1))
+}
+
+fn parse_link_title_str(raw: &str, pedantic: bool) -> Option<(String, usize)> {
+    let quote = raw.chars().next()?;
+    let close = match quote {
+        '"' | '\'' => quote,
+        '(' => ')',
+        _ => return None,
+    };
+
+    let end = if pedantic && matches!(quote, '"' | '\'') {
+        find_last_unescaped_title_close(raw, close)?
+    } else {
+        find_first_unescaped_title_close(raw, close)?
+    };
+
+    let content_start = quote.len_utf8();
+    let title = decode_html_entities(&unescape_inline(&raw[content_start..end]));
+    let consumed = end + close.len_utf8();
     Some((title, consumed))
 }
 
-fn find_first_unescaped_title_close(chars: &[char], close: char) -> Option<usize> {
-    let mut i = 1usize;
-    while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            i += 2;
+fn find_first_unescaped_title_close(raw: &str, close: char) -> Option<usize> {
+    let mut escaped = false;
+    for (idx, ch) in raw.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
             continue;
         }
-        if chars[i] == close {
-            return Some(i);
+        if ch == '\\' {
+            escaped = true;
+            continue;
         }
-        i += 1;
+        if ch == close {
+            return Some(idx);
+        }
     }
     None
 }
 
-fn find_last_unescaped_title_close(chars: &[char], close: char) -> Option<usize> {
+fn find_last_unescaped_title_close(raw: &str, close: char) -> Option<usize> {
     let mut candidate = None;
-    let mut i = 1usize;
-    while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            i += 2;
+    let mut escaped = false;
+    for (idx, ch) in raw.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
             continue;
         }
-        if chars[i] == close {
-            candidate = Some(i);
+        if ch == '\\' {
+            escaped = true;
+            continue;
         }
-        i += 1;
+        if ch == close {
+            candidate = Some(idx);
+        }
     }
     candidate
+}
+
+fn find_first_unescaped_title_close_chars(
+    chars: &[char],
+    start: usize,
+    close: char,
+) -> Option<usize> {
+    let mut escaped = false;
+    let mut idx = start + 1;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        if escaped {
+            escaped = false;
+            idx += 1;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            idx += 1;
+            continue;
+        }
+        if ch == close {
+            return Some(idx);
+        }
+        idx += 1;
+    }
+    None
+}
+
+fn find_last_unescaped_title_close_chars(
+    chars: &[char],
+    start: usize,
+    close: char,
+) -> Option<usize> {
+    let mut candidate = None;
+    let mut escaped = false;
+    let mut idx = start + 1;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        if escaped {
+            escaped = false;
+            idx += 1;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            idx += 1;
+            continue;
+        }
+        if ch == close {
+            candidate = Some(idx);
+        }
+        idx += 1;
+    }
+    candidate
+}
+
+fn parse_html_entity_chars(chars: &[char], start: usize) -> Option<(String, usize)> {
+    if chars.get(start).copied() != Some('&') {
+        return None;
+    }
+
+    let mut end = start + 1;
+    while end < chars.len() {
+        match chars[end] {
+            ';' => {
+                let raw = chars_to_string(&chars[start..=end]);
+                let (decoded, _) = parse_html_entity(&raw)?;
+                return Some((decoded, end - start + 1));
+            }
+            '&' | ' ' | '\t' | '\n' | '\r' => return None,
+            _ => end += 1,
+        }
+    }
+
+    None
 }
 
 fn is_unescaped_image_marker(chars: &[char], start: usize) -> bool {
@@ -1657,23 +1811,24 @@ fn is_markdown_whitespace(ch: char) -> bool {
     matches!(ch, ' ' | '\t' | '\n' | '\r')
 }
 
-fn unescape_inline(raw: String) -> String {
-    if raw.is_empty() {
-        return raw;
+fn unescape_inline(raw: &str) -> String {
+    if raw.is_empty() || !raw.contains('\\') {
+        return raw.to_string();
     }
 
     let mut out = String::with_capacity(raw.len());
-    let chars = raw.chars().collect::<Vec<_>>();
-    let mut i = 0usize;
+    let mut chars = raw.chars();
 
-    while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            out.push(chars[i + 1]);
-            i += 2;
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            } else {
+                out.push('\\');
+            }
             continue;
         }
-        out.push(chars[i]);
-        i += 1;
+        out.push(ch);
     }
 
     out
