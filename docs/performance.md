@@ -36,6 +36,10 @@ npm install
 npm run bench
 ```
 
+Measurement discipline:
+
+- run benchmarks in isolation; do not overlap them with `npm run check:strict`, `cargo test`, or other heavy local workloads
+
 Current benchmark suites:
 
 - `README.md`
@@ -51,11 +55,11 @@ Interpretation:
 
 Primary KPI:
 
-- `Comparable Corpus` mean and median vs `marked`
+- `Comparable Corpus` trimmed mean and median vs `marked`
 
 Secondary KPI:
 
-- `Marked Fixtures` mean and median vs `marked`
+- `Marked Fixtures` trimmed mean and median vs `marked`
 
 Guardrails:
 

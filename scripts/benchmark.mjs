@@ -47,8 +47,8 @@ const SUITES = [
     id: 'full-corpus',
     label: 'Comparable Corpus',
     source: 'All 1485 comparable parser-output cases from vendored marked specs',
-    warmupRuns: 2,
-    measureRuns: 6,
+    warmupRuns: 4,
+    measureRuns: 12,
     options: { gfm: true, breaks: false, pedantic: false },
     loadDocs: () => collectComparableCorpusDocs(),
   },
@@ -147,20 +147,39 @@ function checksumString(input, seed = 2166136261) {
   return hash >>> 0;
 }
 
+function trimRunCount(sampleCount) {
+  if (sampleCount >= 10) {
+    return Math.max(1, Math.floor(sampleCount * 0.1));
+  }
+  if (sampleCount >= 6) {
+    return 1;
+  }
+  return 0;
+}
+
 function summarizeRuns(runsMs, docsCount, inputBytes) {
   const sorted = [...runsMs].sort((a, b) => a - b);
   const meanMs = runsMs.reduce((sum, ms) => sum + ms, 0) / runsMs.length;
+  const trimCount = trimRunCount(sorted.length);
+  const trimmedRuns =
+    trimCount > 0 && trimCount * 2 < sorted.length
+      ? sorted.slice(trimCount, sorted.length - trimCount)
+      : sorted;
+  const trimmedMeanMs =
+    trimmedRuns.reduce((sum, ms) => sum + ms, 0) / trimmedRuns.length;
   const medianMs =
     sorted.length % 2 === 0
       ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
       : sorted[Math.floor(sorted.length / 2)];
   return {
     meanMs,
+    trimmedMeanMs,
     medianMs,
     minMs: sorted[0],
     maxMs: sorted[sorted.length - 1],
-    docsPerSec: (docsCount * 1000) / meanMs,
-    mibPerSec: (inputBytes / (1024 * 1024) * 1000) / meanMs,
+    trimCount,
+    docsPerSec: (docsCount * 1000) / trimmedMeanMs,
+    mibPerSec: (inputBytes / (1024 * 1024) * 1000) / trimmedMeanMs,
   };
 }
 
@@ -286,7 +305,7 @@ function renderMarkdownReport(report) {
   const lines = [];
   lines.push(`Benchmark date: ${report.generatedAt.slice(0, 10)}`);
   lines.push('');
-  lines.push('Method: in-process render throughput on the same default-GFM corpus for all engines. Outputs are not normalized for semantic equality; this report only measures rendering speed on shared inputs.');
+  lines.push('Method: in-process render throughput on the same default-GFM corpus for all engines. Outputs are not normalized for semantic equality; this report only measures rendering speed on shared inputs. `Trimmed mean ms` drops one run from each side for 6-9 samples, or 10% from each side for 10+ samples.');
   lines.push('');
   lines.push(`Environment: ${report.environment.cpu} | ${report.environment.platform} | Node ${report.versions.node} | Rust ${report.versions.rustc}`);
   lines.push('');
@@ -296,7 +315,7 @@ function renderMarkdownReport(report) {
     lines.push(`| ${suite.label} | ${suite.docsCount} | ${formatBytes(suite.inputBytes)} | ${suite.warmupRuns} | ${suite.measureRuns} | ${suite.source} |`);
   }
   lines.push('');
-  lines.push('| Suite | Engine | Mean ms | Median ms | Docs/s | MiB/s | vs marked |');
+  lines.push('| Suite | Engine | Trimmed mean ms | Median ms | Docs/s | MiB/s | vs marked |');
   lines.push('| --- | --- | ---: | ---: | ---: | ---: | ---: |');
 
   const engineOrder = ['markrs', 'pulldown-cmark', 'marked', 'markdown-it', 'remark'];
@@ -311,11 +330,13 @@ function renderMarkdownReport(report) {
           ? 'pulldown-cmark (Rust)'
           : engineId === 'marked'
             ? 'marked (JS)'
-            : engineId === 'markdown-it'
+          : engineId === 'markdown-it'
               ? 'markdown-it (JS)'
               : 'remark + gfm + html';
-      const speedup = marked ? formatSpeedup(marked.meanMs, row.meanMs) : '1.00x';
-      lines.push(`| ${suite.label} | ${label} | ${formatMs(row.meanMs)} | ${formatMs(row.medianMs)} | ${row.docsPerSec.toFixed(1)} | ${row.mibPerSec.toFixed(2)} | ${speedup} |`);
+      const comparisonMs = row.trimmedMeanMs ?? row.meanMs;
+      const markedComparisonMs = marked?.trimmedMeanMs ?? marked?.meanMs;
+      const speedup = markedComparisonMs ? formatSpeedup(markedComparisonMs, comparisonMs) : '1.00x';
+      lines.push(`| ${suite.label} | ${label} | ${formatMs(comparisonMs)} | ${formatMs(row.medianMs)} | ${row.docsPerSec.toFixed(1)} | ${row.mibPerSec.toFixed(2)} | ${speedup} |`);
     }
   }
   lines.push('');
