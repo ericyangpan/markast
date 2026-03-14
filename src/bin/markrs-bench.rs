@@ -112,7 +112,11 @@ fn render_suite(engine: EngineArg, docs: &[String], options: SuiteOptions) -> (u
     for doc in docs {
         match engine {
             EngineArg::Markrs => {
-                render_markdown_to_html_buf(doc, suite_options_to_render_options(options), &mut buf);
+                render_markdown_to_html_buf(
+                    doc,
+                    suite_options_to_render_options(options),
+                    &mut buf,
+                );
                 output_bytes += buf.len();
                 buf.hash(&mut hasher);
             }

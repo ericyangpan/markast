@@ -71,8 +71,8 @@ fn is_trivial_paragraph(input: &str, options: RenderOptions) -> bool {
     for &b in bytes {
         match b {
             b'\n' | b'\r' => return false, // multi-line
-            b'\\' | b'*' | b'_' | b'[' | b']' | b'!' | b'`' | b'~' | b'<' | b'>'
-            | b'#' | b'-' | b'+' | b'=' | b'|' | b'&' => return false,
+            b'\\' | b'*' | b'_' | b'[' | b']' | b'!' | b'`' | b'~' | b'<' | b'>' | b'#' | b'-'
+            | b'+' | b'=' | b'|' | b'&' => return false,
             // GFM bare autolinks trigger on ':', '@', '.'
             b':' | b'@' | b'.' if options.gfm => return false,
             _ => {}

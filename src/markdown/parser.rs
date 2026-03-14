@@ -1,11 +1,6 @@
 use crate::{
     RenderOptions,
-    markdown::{
-        block,
-        lexer::{Line, LineScanner},
-        options::ParserOptions,
-        source::Source,
-    },
+    markdown::{block, lexer::LineScanner, options::ParserOptions},
 };
 
 pub(crate) fn parse_document(
@@ -22,8 +17,7 @@ pub(crate) fn parse_document(
         return ctx.parse_lines(&[input], parser_options.gfm, parser_options.pedantic);
     }
 
-    let source = Source::new(input);
-    let scanner = LineScanner::new(&source);
+    let scanner = LineScanner::new(input);
     parse_with_scanner(&scanner, parser_options)
 }
 
@@ -36,13 +30,13 @@ fn parse_with_scanner(
 }
 
 struct BlockParser<'a> {
-    lines: &'a [Line<'a>],
+    lines: &'a [&'a str],
     gfm: bool,
     pedantic: bool,
 }
 
 impl<'a> BlockParser<'a> {
-    fn new(lines: &'a [Line<'a>], options: ParserOptions) -> Self {
+    fn new(lines: &'a [&'a str], options: ParserOptions) -> Self {
         Self {
             lines,
             gfm: options.gfm,
@@ -52,6 +46,6 @@ impl<'a> BlockParser<'a> {
 
     fn parse(&mut self) -> crate::markdown::ast::Document {
         let mut ctx = block::BlockParseContext::new();
-        ctx.parse_line_slices(self.lines, self.gfm, self.pedantic)
+        ctx.parse_lines(self.lines, self.gfm, self.pedantic)
     }
 }

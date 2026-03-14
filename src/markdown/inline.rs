@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::markdown::span::Span;
 use crate::markdown::{
     ast::inline::Inline,
     block::{
@@ -48,6 +49,1252 @@ impl<'a> InlineParser<'a> {
     }
 }
 
+fn parse_inline_with_refs_mode_ascii(
+    input: &str,
+    gfm: bool,
+    pedantic: bool,
+    refs: Option<&HashMap<String, ReferenceDefinition>>,
+    allow_bare_autolinks: bool,
+    emit_spans: bool,
+) -> Vec<Inline> {
+    debug_assert!(input.is_ascii());
+
+    let bytes = input.as_bytes();
+    let mut out: Vec<InlinePart> = Vec::with_capacity((bytes.len() / 4).max(8));
+    let mut has_delimiters = false;
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\n' {
+            let mut back = i;
+            while back > 0 && matches!(bytes[back - 1], b' ' | b'\t') {
+                back -= 1;
+            }
+            if i - back >= 2 {
+                let mut to_remove = i - back;
+                while to_remove > 0 {
+                    let Some(last_idx) = out.len().checked_sub(1) else {
+                        break;
+                    };
+                    let pop_last = match &mut out[last_idx] {
+                        InlinePart::Node(Inline::Text(last)) => {
+                            if last.ends_with(' ') || last.ends_with('\t') {
+                                last.pop();
+                                to_remove -= 1;
+                                Some(last.is_empty())
+                            } else {
+                                None
+                            }
+                        }
+                        InlinePart::Node(Inline::TextSpan(span)) => {
+                            if span.end > span.start && matches!(bytes[span.end - 1], b' ' | b'\t')
+                            {
+                                span.end -= 1;
+                                to_remove -= 1;
+                                Some(span.start == span.end)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    let Some(pop_last) = pop_last else {
+                        break;
+                    };
+                    if pop_last {
+                        out.pop();
+                    }
+                }
+                push_inline_part(&mut out, InlinePart::Node(Inline::HardBreak));
+                i += 1;
+                continue;
+            }
+
+            if i + 1 < bytes.len() && bytes[i + 1] == b'<' {
+                push_inline_text_char(&mut out, '\n');
+                i += 1;
+                continue;
+            }
+
+            push_inline_part(&mut out, InlinePart::Node(Inline::SoftBreak));
+            i += 1;
+            continue;
+        }
+
+        if bytes[i] == b'\\' {
+            if i + 1 < bytes.len() {
+                if bytes[i + 1] == b'\n' {
+                    push_inline_part(&mut out, InlinePart::Node(Inline::HardBreak));
+                    i += 2;
+                    continue;
+                }
+
+                if bytes[i + 1].is_ascii_punctuation() {
+                    push_inline_text_char(&mut out, bytes[i + 1] as char);
+                    i += 2;
+                    continue;
+                }
+            }
+            push_inline_text_char(&mut out, '\\');
+            i += 1;
+            continue;
+        }
+
+        if bytes[i] == b'<' {
+            if let Some((href, label, close)) = parse_autolink_like_bytes(bytes, i, input) {
+                push_inline_part(
+                    &mut out,
+                    InlinePart::Node(Inline::Link {
+                        label: vec![Inline::Text(label)],
+                        href,
+                        title: None,
+                    }),
+                );
+                i = close + 1;
+                continue;
+            }
+            if let Some(close) = parse_raw_html_bytes(bytes, i) {
+                push_inline_part(
+                    &mut out,
+                    InlinePart::Node(if emit_spans {
+                        Inline::RawHtmlSpan(Span::new(i, close))
+                    } else {
+                        Inline::RawHtml(input[i..close].to_string())
+                    }),
+                );
+                i = close;
+                continue;
+            }
+        }
+
+        if matches!(bytes[i], b'"' | b'\'') {
+            if let Some((href, label, close)) = parse_quoted_autolink_like_bytes(bytes, i, input) {
+                push_inline_text_char(&mut out, bytes[i] as char);
+                push_inline_part(
+                    &mut out,
+                    InlinePart::Node(Inline::Link {
+                        label: vec![Inline::Text(label)],
+                        href,
+                        title: None,
+                    }),
+                );
+                i = close;
+                continue;
+            }
+        }
+
+        if let Some((delimiter, run_len)) =
+            parse_delimiter_run_bytes(bytes, i, gfm, input, emit_spans)
+        {
+            has_delimiters |= matches!(delimiter, InlinePart::Delimiter { .. });
+            push_inline_part(&mut out, delimiter);
+            i += run_len;
+            continue;
+        }
+
+        if bytes[i] == b'`' {
+            let open_len = count_consecutive_byte(bytes, i, b'`');
+            if let Some((span, close)) = parse_code_span_bytes(bytes, i) {
+                push_inline_part(
+                    &mut out,
+                    InlinePart::Node(if emit_spans {
+                        Inline::CodeSpan(span)
+                    } else {
+                        Inline::Code(normalize_code_content(span.as_str(input)))
+                    }),
+                );
+                i = close + 1;
+                continue;
+            }
+            if open_len > 1 {
+                push_inline_part(
+                    &mut out,
+                    InlinePart::Node(if emit_spans {
+                        Inline::TextSpan(Span::new(i, i + open_len))
+                    } else {
+                        Inline::Text(input[i..i + open_len].to_string())
+                    }),
+                );
+                i += open_len;
+                continue;
+            }
+        }
+
+        if bytes[i] == b'!'
+            && i + 1 < bytes.len()
+            && bytes[i + 1] == b'['
+            && !is_escaped_byte(bytes, i)
+        {
+            if let Some((close_ref, src, title, alt)) =
+                parse_reference_image_bytes(bytes, i + 1, gfm, pedantic, refs, input)
+            {
+                let parsed_alt = parse_inline_fragment(&alt, gfm, pedantic, refs);
+                push_inline_part(
+                    &mut out,
+                    InlinePart::Node(Inline::Image {
+                        alt: parsed_alt,
+                        src,
+                        title,
+                    }),
+                );
+                i = close_ref + 1;
+                continue;
+            }
+
+            if let Some((src, alt, title, close_src)) =
+                parse_image_like_bytes(bytes, i + 1, pedantic, input)
+            {
+                let parsed_alt = parse_inline_fragment(&alt, gfm, pedantic, refs);
+                push_inline_part(
+                    &mut out,
+                    InlinePart::Node(Inline::Image {
+                        alt: parsed_alt,
+                        src,
+                        title,
+                    }),
+                );
+                i = close_src + 1;
+                continue;
+            }
+        }
+
+        if bytes[i] == b'[' && !is_unescaped_image_marker_bytes(bytes, i) {
+            if let Some((href, close_link, label, title)) =
+                parse_link_like_bytes(bytes, i, pedantic, input)
+            {
+                let parsed_label = parse_inline_fragment(&label, gfm, pedantic, refs);
+                if inline_nodes_contain_link(&parsed_label) {
+                    // Links cannot contain other links. Fall back to literal text so inner links survive.
+                } else {
+                    push_inline_part(
+                        &mut out,
+                        InlinePart::Node(Inline::Link {
+                            label: parsed_label,
+                            href,
+                            title,
+                        }),
+                    );
+                    i = close_link + 1;
+                    continue;
+                }
+            }
+
+            if let Some((close_link, href, title, label)) =
+                parse_reference_link_bytes(bytes, i, gfm, pedantic, refs, input)
+            {
+                let parsed_label = parse_inline_fragment(&label, gfm, pedantic, refs);
+                if inline_nodes_contain_link(&parsed_label) {
+                    // Reference links follow the same nested-link rule.
+                } else {
+                    push_inline_part(
+                        &mut out,
+                        InlinePart::Node(Inline::Link {
+                            label: parsed_label,
+                            href,
+                            title,
+                        }),
+                    );
+                    i = close_link + 1;
+                    continue;
+                }
+            }
+        }
+
+        if bytes[i] == b'&' {
+            if let Some((decoded, consumed_bytes)) = parse_html_entity_bytes(bytes, i, input) {
+                push_inline_part(&mut out, InlinePart::Node(Inline::Text(decoded)));
+                i += consumed_bytes;
+                continue;
+            }
+        }
+
+        let plain_start = i;
+        let mut plain: Option<String> = None;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_punctuation() {
+                let buf = plain.get_or_insert_with(|| input[plain_start..i].to_string());
+                buf.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+
+            if bytes[i] == b'\n' || is_token_start_byte(bytes, i, gfm) {
+                break;
+            }
+
+            if let Some(buf) = plain.as_mut() {
+                buf.push(bytes[i] as char);
+            }
+            i += 1;
+        }
+        if plain_start == i && i < bytes.len() {
+            if emit_spans {
+                push_inline_part(
+                    &mut out,
+                    InlinePart::Node(Inline::TextSpan(Span::new(i, i + 1))),
+                );
+            } else {
+                push_inline_text_char(&mut out, bytes[i] as char);
+            }
+            i += 1;
+            continue;
+        }
+        if plain.is_none() && emit_spans {
+            let span = Span::new(plain_start, i);
+            push_inline_part(
+                &mut out,
+                InlinePart::Node(inline_plain_text_from_span(input, span)),
+            );
+        } else {
+            let plain = plain.unwrap_or_else(|| input[plain_start..i].to_string());
+            push_inline_part(
+                &mut out,
+                InlinePart::Node(Inline::Text(normalize_inline_plain_text(plain))),
+            );
+        }
+    }
+
+    let nodes = if has_delimiters {
+        resolve_inline_parts(out)
+    } else {
+        inline_parts_into_nodes(out)
+    };
+
+    if allow_bare_autolinks && gfm {
+        apply_gfm_bare_autolinks(nodes, input)
+    } else {
+        nodes
+    }
+}
+
+#[inline]
+fn is_markdown_whitespace_byte(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r')
+}
+
+#[inline]
+fn is_token_start_byte(bytes: &[u8], i: usize, gfm: bool) -> bool {
+    let b = bytes[i];
+    match b {
+        b'\\' | b'*' | b'_' | b'[' | b'`' => true,
+        b'~' => gfm,
+        b'!' => bytes.get(i + 1) == Some(&b'['),
+        b'<' => {
+            let Some(next) = bytes.get(i + 1) else {
+                return false;
+            };
+            if matches!(*next, b'/' | b'!' | b'?') || next.is_ascii_alphabetic() {
+                return true;
+            }
+
+            // Email autolinks like `<1@ex.com>` or `<_@ex.com>`.
+            if next.is_ascii_alphanumeric() || matches!(*next, b'.' | b'_' | b'+' | b'-') {
+                let mut j = i + 2;
+                let mut saw_at = false;
+                while j < bytes.len() {
+                    let c = bytes[j];
+                    if c == b'@' {
+                        saw_at = true;
+                    }
+                    if c == b'>' {
+                        return saw_at;
+                    }
+                    if c.is_ascii_whitespace() || c == b'<' {
+                        return false;
+                    }
+                    j += 1;
+                }
+            }
+
+            false
+        }
+        b'&' => {
+            // Only treat as a token start if it could be a character reference (`&...;`).
+            let Some(next) = bytes.get(i + 1) else {
+                return false;
+            };
+            if !(*next == b'#' || next.is_ascii_alphabetic()) {
+                return false;
+            }
+
+            let mut j = i + 2;
+            while j < bytes.len() {
+                match bytes[j] {
+                    b';' => return true,
+                    b'&' | b' ' | b'\t' | b'\n' | b'\r' => return false,
+                    _ => j += 1,
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn parse_autolink_like_bytes(
+    bytes: &[u8],
+    start: usize,
+    input: &str,
+) -> Option<(String, String, usize)> {
+    if start + 1 >= bytes.len() || bytes[start] != b'<' {
+        return None;
+    }
+    let mut close = start + 1;
+    while close < bytes.len() && bytes[close] != b'>' {
+        close += 1;
+    }
+    if close >= bytes.len() || close <= start + 1 {
+        return None;
+    }
+
+    let inner = &input[start + 1..close];
+    let trimmed = inner.trim();
+    if trimmed.is_empty()
+        || inner != trimmed
+        || trimmed.contains(' ')
+        || trimmed.contains('\n')
+        || trimmed.contains('\r')
+    {
+        return None;
+    }
+
+    let href = if is_autolink_uri(trimmed) {
+        normalize_autolink_destination(trimmed)?
+    } else if is_autolink_email(trimmed) {
+        format!("mailto:{trimmed}")
+    } else {
+        return None;
+    };
+
+    Some((href, trimmed.to_string(), close))
+}
+
+#[inline]
+fn starts_with_bytes(bytes: &[u8], start: usize, needle: &[u8]) -> bool {
+    bytes
+        .get(start..)
+        .is_some_and(|tail| tail.starts_with(needle))
+}
+
+fn parse_raw_html_bytes(bytes: &[u8], start: usize) -> Option<usize> {
+    if start + 1 >= bytes.len() {
+        return None;
+    }
+
+    if starts_with_bytes(bytes, start, b"<!--") {
+        let mut i = start + 4;
+        while i + 2 < bytes.len() {
+            if bytes[i] == b'-' && bytes[i + 1] == b'-' && bytes[i + 2] == b'>' {
+                return Some(i + 3);
+            }
+            i += 1;
+        }
+        return None;
+    }
+
+    if starts_with_bytes(bytes, start, b"<?") {
+        let mut i = start + 2;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'?' && bytes[i + 1] == b'>' {
+                return Some(i + 2);
+            }
+            i += 1;
+        }
+        return None;
+    }
+
+    if starts_with_bytes(bytes, start, b"<![CDATA[") {
+        let mut i = start + 9;
+        while i + 2 < bytes.len() {
+            if bytes[i] == b']' && bytes[i + 1] == b']' && bytes[i + 2] == b'>' {
+                return Some(i + 3);
+            }
+            i += 1;
+        }
+        return None;
+    }
+
+    if starts_with_bytes(bytes, start, b"<!")
+        && bytes.get(start + 2).is_some_and(|b| b.is_ascii_uppercase())
+    {
+        let mut i = start + 3;
+        while i < bytes.len() {
+            if bytes[i] == b'>' {
+                return Some(i + 1);
+            }
+            i += 1;
+        }
+        return None;
+    }
+
+    if let Some(close) = parse_html_tag_like_bytes(bytes, start) {
+        return Some(close);
+    }
+
+    None
+}
+
+fn parse_html_tag_like_bytes(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut i = start + 1;
+    let closing = bytes.get(i) == Some(&b'/');
+    if closing {
+        i += 1;
+        if i >= bytes.len() || !bytes[i].is_ascii_alphabetic() {
+            return None;
+        }
+    } else if !bytes.get(i)?.is_ascii_alphabetic() {
+        return None;
+    }
+
+    i += 1;
+    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-') {
+        i += 1;
+    }
+
+    if closing {
+        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r') {
+            i += 1;
+        }
+        return (bytes.get(i) == Some(&b'>')).then_some(i + 1);
+    }
+
+    loop {
+        let mut had_space = false;
+        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r') {
+            i += 1;
+            had_space = true;
+        }
+        if i >= bytes.len() {
+            return None;
+        }
+
+        match bytes[i] {
+            b'>' => return Some(i + 1),
+            b'/' if bytes.get(i + 1) == Some(&b'>') => return Some(i + 2),
+            _ => {}
+        }
+
+        if !had_space {
+            return None;
+        }
+
+        if !is_html_attribute_name_start_byte(bytes[i]) {
+            return None;
+        }
+        i += 1;
+        while i < bytes.len() && is_html_attribute_name_char_byte(bytes[i]) {
+            i += 1;
+        }
+
+        let attr_end = i;
+        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r') {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            return None;
+        }
+        if bytes[i] != b'=' {
+            i = attr_end;
+            continue;
+        }
+
+        i += 1;
+        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r') {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            return None;
+        }
+
+        match bytes[i] {
+            b'\'' | b'"' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += 1;
+                }
+                if i >= bytes.len() {
+                    return None;
+                }
+                i += 1;
+            }
+            b' ' | b'\t' | b'\n' | b'\r' | b'>' => return None,
+            _ => {
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b' ' | b'\t' | b'\n' | b'\r' | b'>' => break,
+                        b'"' | b'\'' | b'=' | b'<' | b'`' => return None,
+                        _ => i += 1,
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[inline]
+fn is_html_attribute_name_start_byte(b: u8) -> bool {
+    b.is_ascii_alphabetic() || matches!(b, b'_' | b':')
+}
+
+#[inline]
+fn is_html_attribute_name_char_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b':' | b'.' | b'-')
+}
+
+fn parse_quoted_autolink_like_bytes(
+    bytes: &[u8],
+    start: usize,
+    input: &str,
+) -> Option<(String, String, usize)> {
+    if start + 1 >= bytes.len() {
+        return None;
+    }
+    let quote = bytes[start];
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+
+    let mut close = bytes.len();
+    while close > start + 1 {
+        if bytes[close - 1] == quote {
+            let inner = &input[start + 1..close - 1];
+            if inner.is_empty()
+                || inner.contains(' ')
+                || inner.contains('\n')
+                || inner.contains('\r')
+            {
+                close -= 1;
+                continue;
+            }
+            let is_email = is_autolink_email(inner);
+            if is_autolink_uri(inner) || is_email {
+                let href = if is_email {
+                    format!("mailto:{inner}")
+                } else {
+                    inner.to_string()
+                };
+                return Some((href, inner.to_string(), close - 1));
+            }
+        }
+        close -= 1;
+    }
+
+    None
+}
+
+fn parse_delimiter_run_bytes(
+    bytes: &[u8],
+    start: usize,
+    gfm: bool,
+    input: &str,
+    emit_spans: bool,
+) -> Option<(InlinePart, usize)> {
+    let marker = *bytes.get(start)?;
+    if marker != b'*' && marker != b'_' && !(gfm && marker == b'~') {
+        return None;
+    }
+
+    let run_len = count_consecutive_byte(bytes, start, marker);
+    if marker == b'~' && run_len > 2 {
+        return Some((
+            InlinePart::Node(if emit_spans {
+                Inline::TextSpan(Span::new(start, start + run_len))
+            } else {
+                Inline::Text(input[start..start + run_len].to_string())
+            }),
+            run_len,
+        ));
+    }
+
+    let can_open = delimiter_run_can_open_bytes(bytes, start, run_len, marker);
+    let can_close = delimiter_run_can_close_bytes(bytes, start, run_len, marker);
+    let part = if can_open || can_close {
+        InlinePart::Delimiter {
+            marker: marker as char,
+            len: run_len,
+            original_len: run_len,
+            can_open,
+            can_close,
+            span: if emit_spans {
+                Some(Span::new(start, start + run_len))
+            } else {
+                None
+            },
+        }
+    } else {
+        InlinePart::Node(if emit_spans {
+            Inline::TextSpan(Span::new(start, start + run_len))
+        } else {
+            Inline::Text(input[start..start + run_len].to_string())
+        })
+    };
+
+    Some((part, run_len))
+}
+
+#[inline]
+fn delimiter_run_can_open_bytes(bytes: &[u8], start: usize, run_len: usize, marker: u8) -> bool {
+    let (left_flanking, right_flanking, prev_punct, _next_punct) =
+        delimiter_flanking_bytes(bytes, start, run_len);
+    match marker {
+        b'_' => left_flanking && (!right_flanking || prev_punct),
+        b'*' => {
+            left_flanking
+                || bytes.get(start.wrapping_sub(1)).copied() == Some(b'~')
+                || bytes.get(start + run_len).copied() == Some(b'~')
+        }
+        b'~' => left_flanking,
+        _ => false,
+    }
+}
+
+#[inline]
+fn delimiter_run_can_close_bytes(bytes: &[u8], start: usize, run_len: usize, marker: u8) -> bool {
+    let (_left_flanking, right_flanking, _prev_punct, next_punct) =
+        delimiter_flanking_bytes(bytes, start, run_len);
+    match marker {
+        b'_' => right_flanking && (!(_left_flanking) || next_punct),
+        b'*' => right_flanking || bytes.get(start.wrapping_sub(1)).copied() == Some(b'~'),
+        b'~' => right_flanking,
+        _ => false,
+    }
+}
+
+#[inline]
+fn delimiter_flanking_bytes(
+    bytes: &[u8],
+    start: usize,
+    run_len: usize,
+) -> (bool, bool, bool, bool) {
+    let prev = if start == 0 {
+        None
+    } else {
+        bytes.get(start - 1).copied()
+    };
+    let next = bytes.get(start + run_len).copied();
+
+    let prev_is_whitespace = prev.is_none_or(|b| b.is_ascii_whitespace());
+    let next_is_whitespace = next.is_none_or(|b| b.is_ascii_whitespace());
+    let prev_is_punct = prev.is_some_and(is_markdown_punctuation_byte);
+    let next_is_punct = next.is_some_and(is_markdown_punctuation_byte);
+
+    let left_flanking =
+        !next_is_whitespace && (!next_is_punct || prev_is_whitespace || prev_is_punct);
+    let right_flanking =
+        !prev_is_whitespace && (!prev_is_punct || next_is_whitespace || next_is_punct);
+
+    (left_flanking, right_flanking, prev_is_punct, next_is_punct)
+}
+
+#[inline]
+fn is_markdown_punctuation_byte(b: u8) -> bool {
+    !b.is_ascii_alphanumeric() && !b.is_ascii_whitespace()
+}
+
+fn parse_code_span_bytes(bytes: &[u8], start: usize) -> Option<(Span, usize)> {
+    let open_len = count_consecutive_byte(bytes, start, b'`');
+    if open_len == 0 {
+        return None;
+    }
+
+    let content_start = start + open_len;
+    let close = find_code_span_end_with_open_len_bytes(bytes, start, open_len)?;
+    let close_start = close + 1 - open_len;
+    Some((Span::new(content_start, close_start), close))
+}
+
+#[inline]
+fn count_consecutive_byte(bytes: &[u8], start: usize, marker: u8) -> usize {
+    let mut i = start;
+    while i < bytes.len() && bytes[i] == marker {
+        i += 1;
+    }
+    i.saturating_sub(start)
+}
+
+fn find_code_span_end_with_open_len_bytes(
+    bytes: &[u8],
+    start: usize,
+    open_len: usize,
+) -> Option<usize> {
+    if open_len == 0 || start + open_len > bytes.len() {
+        return None;
+    }
+
+    let mut i = start + open_len;
+    while i + open_len <= bytes.len() {
+        if bytes[i..i + open_len].iter().all(|b| *b == b'`') {
+            let prev_ok = i == 0 || bytes[i - 1] != b'`';
+            let next_ok = i + open_len >= bytes.len() || bytes[i + open_len] != b'`';
+            if prev_ok && next_ok {
+                return Some(i + open_len - 1);
+            }
+        }
+        i += 1;
+    }
+
+    None
+}
+
+fn find_matching_bracket_bytes(
+    bytes: &[u8],
+    start: usize,
+    open: u8,
+    close: u8,
+    input: &str,
+) -> Option<usize> {
+    if start >= bytes.len() || bytes[start] != open {
+        return None;
+    }
+
+    let mut i = start;
+    let mut depth = 0usize;
+    let mut escaped = false;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+
+        if b == b'\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+
+        if b == b'`' {
+            let run_len = count_consecutive_byte(bytes, i, b'`');
+            if let Some(end) = find_code_span_end_with_open_len_bytes(bytes, i, run_len) {
+                i = end + 1;
+                continue;
+            }
+            i += run_len.max(1);
+            continue;
+        }
+
+        if b == b'<' {
+            if let Some((_, _, end)) = parse_autolink_like_bytes(bytes, i, input) {
+                i = end + 1;
+                continue;
+            }
+            if let Some(end) = parse_raw_html_bytes(bytes, i) {
+                i = end;
+                continue;
+            }
+        }
+
+        if b == open {
+            depth += 1;
+        } else if b == close {
+            if depth == 0 {
+                return None;
+            }
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+
+        i += 1;
+    }
+
+    None
+}
+
+fn parse_link_like_bytes(
+    bytes: &[u8],
+    start: usize,
+    pedantic: bool,
+    input: &str,
+) -> Option<(String, usize, String, Option<String>)> {
+    let close_label = find_matching_bracket_bytes(bytes, start, b'[', b']', input)?;
+    if close_label + 1 >= bytes.len() || bytes[close_label + 1] != b'(' {
+        return None;
+    }
+    let (href, title, close_href) =
+        parse_inline_link_target_bytes(bytes, close_label + 2, pedantic, input)?;
+    let label = input[start + 1..close_label].to_string();
+    Some((href, close_href, label, title))
+}
+
+fn parse_reference_link_bytes(
+    bytes: &[u8],
+    start: usize,
+    gfm: bool,
+    pedantic: bool,
+    refs: Option<&HashMap<String, ReferenceDefinition>>,
+    input: &str,
+) -> Option<(usize, String, Option<String>, String)> {
+    let _ = gfm;
+    if start >= bytes.len() || bytes[start] != b'[' {
+        return None;
+    }
+    let close_label = find_matching_bracket_bytes(bytes, start, b'[', b']', input)?;
+    let label = input[start + 1..close_label].to_string();
+    let candidate_ref = label.trim();
+
+    let mut next = close_label + 1;
+    if pedantic {
+        while next < bytes.len() && matches!(bytes[next], b' ' | b'\t' | b'\n' | b'\r') {
+            next += 1;
+        }
+    }
+    if next < bytes.len() && bytes[next] == b'[' {
+        let label_start = next + 1;
+        if label_start > bytes.len() {
+            return None;
+        }
+
+        let (ref_label, close_ref) = if label_start < bytes.len() && bytes[label_start] == b']' {
+            (candidate_ref.to_string(), label_start)
+        } else {
+            let close = find_matching_bracket_bytes(bytes, next, b'[', b']', input)?;
+            (input[label_start..close].to_string(), close)
+        };
+        let normalized = try_normalize_reference_label(&ref_label)?;
+        if let Some(def) =
+            refs.and_then(|m: &HashMap<String, ReferenceDefinition>| m.get(&normalized))
+        {
+            return Some((close_ref, def.href.clone(), def.title.clone(), label));
+        }
+        return None;
+    }
+
+    let normalized = normalize_reference_label(candidate_ref);
+    if let Some(def) = refs.and_then(|m: &HashMap<String, ReferenceDefinition>| m.get(&normalized))
+    {
+        Some((close_label, def.href.clone(), def.title.clone(), label))
+    } else {
+        None
+    }
+}
+
+fn parse_reference_image_bytes(
+    bytes: &[u8],
+    start: usize,
+    gfm: bool,
+    pedantic: bool,
+    refs: Option<&HashMap<String, ReferenceDefinition>>,
+    input: &str,
+) -> Option<(usize, String, Option<String>, String)> {
+    let _ = gfm;
+    if !is_unescaped_image_marker_bytes(bytes, start) {
+        return None;
+    }
+
+    let close_alt = find_matching_bracket_bytes(bytes, start, b'[', b']', input)?;
+    let alt = input[start + 1..close_alt].to_string();
+    let candidate_ref = alt.trim();
+
+    let mut next = close_alt + 1;
+    if pedantic {
+        while next < bytes.len() && matches!(bytes[next], b' ' | b'\t' | b'\n' | b'\r') {
+            next += 1;
+        }
+    }
+    if next < bytes.len() && bytes[next] == b'[' {
+        let label_start = next + 1;
+        let (ref_label, close_ref) = if label_start < bytes.len() && bytes[label_start] == b']' {
+            (candidate_ref.to_string(), label_start)
+        } else {
+            let close = find_matching_bracket_bytes(bytes, next, b'[', b']', input)?;
+            (input[label_start..close].to_string(), close)
+        };
+        let normalized = try_normalize_reference_label(&ref_label)?;
+        if let Some(def) = refs.and_then(|m| m.get(&normalized)) {
+            return Some((close_ref, def.href.clone(), def.title.clone(), alt));
+        }
+        return None;
+    }
+
+    let normalized = normalize_reference_label(candidate_ref);
+    refs.and_then(|m| m.get(&normalized))
+        .map(|def| (close_alt, def.href.clone(), def.title.clone(), alt))
+}
+
+fn parse_image_like_bytes(
+    bytes: &[u8],
+    start: usize,
+    pedantic: bool,
+    input: &str,
+) -> Option<(String, String, Option<String>, usize)> {
+    if !is_unescaped_image_marker_bytes(bytes, start) {
+        return None;
+    }
+    let close_alt = find_matching_bracket_bytes(bytes, start, b'[', b']', input)?;
+    if close_alt + 1 >= bytes.len() || bytes[close_alt + 1] != b'(' {
+        return None;
+    }
+    let (src, title, close_src) =
+        parse_inline_link_target_bytes(bytes, close_alt + 2, pedantic, input)?;
+    let alt = input[start + 1..close_alt].to_string();
+    Some((src, alt, title, close_src))
+}
+
+fn parse_inline_link_target_bytes(
+    bytes: &[u8],
+    start: usize,
+    pedantic: bool,
+    input: &str,
+) -> Option<(String, Option<String>, usize)> {
+    let mut i = start;
+    while i < bytes.len() && is_markdown_whitespace_byte(bytes[i]) {
+        i += 1;
+    }
+
+    if i < bytes.len() && bytes[i] == b')' {
+        return Some((String::new(), None, i));
+    }
+
+    if pedantic && i < bytes.len() && bytes[i] != b'<' {
+        if let Some(parsed) = parse_pedantic_bare_link_target_bytes(bytes, i, input) {
+            return Some(parsed);
+        }
+    }
+
+    let (href, after_dest) = if i < bytes.len() && bytes[i] == b'<' {
+        parse_angle_link_destination_bytes(bytes, i, pedantic, input)?
+    } else {
+        parse_bare_link_destination_bytes(bytes, i, input)?
+    };
+
+    let mut j = after_dest;
+    while j < bytes.len() && is_markdown_whitespace_byte(bytes[j]) {
+        j += 1;
+    }
+    let had_separator = j > after_dest;
+
+    if j >= bytes.len() {
+        return None;
+    }
+    if bytes[j] == b')' {
+        return Some((href, None, j));
+    }
+    if !had_separator {
+        return None;
+    }
+
+    let (title, consumed) = parse_link_title_str(&input[j..], pedantic)?;
+    let after_title = j + consumed;
+    let mut k = after_title;
+    while k < bytes.len() && is_markdown_whitespace_byte(bytes[k]) {
+        k += 1;
+    }
+    if k >= bytes.len() || bytes[k] != b')' {
+        return None;
+    }
+
+    Some((href, Some(title), k))
+}
+
+fn parse_pedantic_bare_link_target_bytes(
+    bytes: &[u8],
+    start: usize,
+    input: &str,
+) -> Option<(String, Option<String>, usize)> {
+    let close = find_pedantic_link_target_end_bytes(bytes, start)?;
+    let inner = &input[start..close];
+    let trimmed = inner.trim_start();
+    if trimmed.is_empty() {
+        return Some((String::new(), None, close));
+    }
+
+    if let Some((dest, title)) = split_pedantic_destination_and_title(trimmed) {
+        return Some((normalize_reference_destination(&dest)?, Some(title), close));
+    }
+
+    Some((
+        normalize_reference_destination(trimmed.trim_end())?,
+        None,
+        close,
+    ))
+}
+
+fn find_pedantic_link_target_end_bytes(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut i = start;
+    let mut escaped = false;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        if b == b'\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if b == b')' {
+            return Some(i);
+        }
+        if b == b'\n' || b == b'\r' {
+            return None;
+        }
+        i += 1;
+    }
+
+    None
+}
+
+fn parse_angle_link_destination_bytes(
+    bytes: &[u8],
+    start: usize,
+    pedantic: bool,
+    input: &str,
+) -> Option<(String, usize)> {
+    if bytes.get(start).copied() != Some(b'<') {
+        return None;
+    }
+
+    let mut i = start + 1;
+    let mut raw: Option<String> = None;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\\' {
+            let next = *bytes.get(i + 1)?;
+            let buf = raw.get_or_insert_with(|| input[start + 1..i].to_string());
+            if next.is_ascii_punctuation() {
+                buf.push(next as char);
+                i += 2;
+                continue;
+            }
+            buf.push('\\');
+            i += 1;
+            continue;
+        }
+        if b == b'>' {
+            let raw = raw.unwrap_or_else(|| input[start + 1..i].to_string());
+            return Some((normalize_reference_destination(&raw)?, i + 1));
+        }
+        if b == b'\n' || b == b'\r' || b == b'<' {
+            return None;
+        }
+        if let Some(buf) = raw.as_mut() {
+            buf.push(b as char);
+        }
+        i += 1;
+    }
+
+    if !pedantic {
+        return None;
+    }
+
+    let mut close = start + 1;
+    while close < bytes.len() && bytes[close] != b')' {
+        if bytes[close] == b'\n' || bytes[close] == b'\r' {
+            return None;
+        }
+        close += 1;
+    }
+    if close >= bytes.len() || bytes[close] != b')' {
+        return None;
+    }
+
+    let mut raw = input[start + 1..close].to_string();
+    if raw.ends_with('>') {
+        raw.pop();
+    }
+    Some((normalize_reference_destination(&raw)?, close))
+}
+
+fn parse_bare_link_destination_bytes(
+    bytes: &[u8],
+    start: usize,
+    input: &str,
+) -> Option<(String, usize)> {
+    let mut i = start;
+    let mut depth = 0usize;
+    let mut escaped = false;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        if b == b'\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if is_markdown_whitespace_byte(b) {
+            break;
+        }
+        if b == b'(' {
+            depth += 1;
+            i += 1;
+            continue;
+        }
+        if b == b')' {
+            if depth == 0 {
+                break;
+            }
+            depth -= 1;
+            i += 1;
+            continue;
+        }
+        i += 1;
+    }
+
+    if i == start {
+        return None;
+    }
+
+    let raw = &input[start..i];
+    Some((normalize_reference_destination(raw)?, i))
+}
+
+fn parse_html_entity_bytes(bytes: &[u8], start: usize, input: &str) -> Option<(String, usize)> {
+    if bytes.get(start).copied() != Some(b'&') {
+        return None;
+    }
+
+    let mut end = start + 1;
+    while end < bytes.len() {
+        match bytes[end] {
+            b';' => {
+                let raw = &input[start..end + 1];
+                let (decoded, _) = parse_html_entity(raw)?;
+                return Some((decoded, end - start + 1));
+            }
+            b'&' | b' ' | b'\t' | b'\n' | b'\r' => return None,
+            _ => end += 1,
+        }
+    }
+
+    None
+}
+
+#[inline]
+fn is_unescaped_image_marker_bytes(bytes: &[u8], start: usize) -> bool {
+    start > 0
+        && bytes[start] == b'['
+        && bytes[start - 1] == b'!'
+        && !is_escaped_byte(bytes, start - 1)
+}
+
+#[inline]
+fn is_escaped_byte(bytes: &[u8], index: usize) -> bool {
+    if index == 0 {
+        return false;
+    }
+
+    let mut backslashes = 0usize;
+    let mut i = index;
+    while i > 0 && bytes[i - 1] == b'\\' {
+        backslashes += 1;
+        i -= 1;
+    }
+    backslashes % 2 == 1
+}
+
 #[cfg(test)]
 pub(crate) fn parse_inline(input: &str, gfm: bool) -> Vec<Inline> {
     InlineParser::new(input, gfm, false).parse()
@@ -59,7 +1306,16 @@ pub(crate) fn parse_inline_with_refs(
     pedantic: bool,
     refs: Option<&HashMap<String, ReferenceDefinition>>,
 ) -> Vec<Inline> {
-    parse_inline_with_refs_mode(input, gfm, pedantic, refs, gfm)
+    parse_inline_with_refs_mode(input, gfm, pedantic, refs, gfm, false)
+}
+
+pub(crate) fn parse_inline_with_refs_spans(
+    input: &str,
+    gfm: bool,
+    pedantic: bool,
+    refs: &HashMap<String, ReferenceDefinition>,
+) -> Vec<Inline> {
+    parse_inline_with_refs_mode(input, gfm, pedantic, Some(refs), gfm, true)
 }
 
 fn parse_inline_with_refs_mode(
@@ -68,17 +1324,45 @@ fn parse_inline_with_refs_mode(
     pedantic: bool,
     refs: Option<&HashMap<String, ReferenceDefinition>>,
     allow_bare_autolinks: bool,
+    emit_spans: bool,
 ) -> Vec<Inline> {
     if input.is_empty() {
         return Vec::new();
     }
 
-    if !inline_fragment_needs_parse(input) {
-        let text = normalize_inline_plain_text(input.to_string());
+    let scan = inline_fragment_scan(input, gfm);
+    if !scan.needs_parse {
+        let span = Span::new(0, input.len());
+
         if allow_bare_autolinks && gfm {
+            if emit_spans && scan.is_ascii {
+                if !text_may_have_bare_autolink_candidate(input) {
+                    return vec![inline_plain_text_from_span(input, span)];
+                }
+                return autolink_text_nodes_span(input, span);
+            }
+
+            let text = normalize_inline_plain_text(input.to_string());
             return autolink_text_nodes(text);
         }
+
+        if emit_spans && scan.is_ascii {
+            return vec![inline_plain_text_from_span(input, span)];
+        }
+
+        let text = normalize_inline_plain_text(input.to_string());
         return vec![Inline::Text(text)];
+    }
+
+    if scan.is_ascii {
+        return parse_inline_with_refs_mode_ascii(
+            input,
+            gfm,
+            pedantic,
+            refs,
+            allow_bare_autolinks,
+            emit_spans,
+        );
     }
 
     let mut chars = Vec::with_capacity(input.len());
@@ -138,7 +1422,7 @@ fn parse_inline_with_refs_mode(
                 }
 
                 if is_escapable(chars[i + 1]) {
-                    push_inline_part(&mut out, inline_text_part_from_char(chars[i + 1]));
+                    push_inline_text_char(&mut out, chars[i + 1]);
                     i += 2;
                     continue;
                 }
@@ -175,7 +1459,7 @@ fn parse_inline_with_refs_mode(
         }
 
         if let Some((href, label, close)) = parse_quoted_autolink_like(&chars, i) {
-            push_inline_part(&mut out, inline_text_part_from_char(chars[i]));
+            push_inline_text_char(&mut out, chars[i]);
             push_inline_part(
                 &mut out,
                 InlinePart::Node(Inline::Link {
@@ -197,17 +1481,17 @@ fn parse_inline_with_refs_mode(
 
         if chars[i] == '`' {
             let open_len = count_consecutive(&chars, i, '`');
-            if open_len > 1 && parse_code_span(&chars, i).is_none() {
+            if let Some((code, close)) = parse_code_span(&chars, i) {
+                push_inline_part(&mut out, InlinePart::Node(Inline::Code(code)));
+                i = close + 1;
+                continue;
+            }
+            if open_len > 1 {
                 push_inline_part(
                     &mut out,
                     InlinePart::Node(Inline::Text(chars_to_string(&chars[i..i + open_len]))),
                 );
                 i += open_len;
-                continue;
-            }
-            if let Some((code, close)) = parse_code_span(&chars, i) {
-                push_inline_part(&mut out, InlinePart::Node(Inline::Code(code)));
-                i = close + 1;
                 continue;
             }
         }
@@ -296,25 +1580,31 @@ fn parse_inline_with_refs_mode(
             }
         }
 
-        let mut plain = String::with_capacity((chars.len() - i).min(32));
+        let plain_start = i;
+        let mut plain: Option<String> = None;
         while i < chars.len() {
             if chars[i] == '\\' && i + 1 < chars.len() && is_escapable(chars[i + 1]) {
-                plain.push(chars[i + 1]);
+                let buf = plain.get_or_insert_with(|| chars_to_string(&chars[plain_start..i]));
+                buf.push(chars[i + 1]);
                 i += 2;
                 continue;
             }
 
-            if chars[i] == '\n' || is_token_start(&chars, i) {
+            if chars[i] == '\n' || is_token_start(&chars, i, gfm) {
                 break;
             }
 
-            plain.push(chars[i]);
+            if let Some(buf) = plain.as_mut() {
+                buf.push(chars[i]);
+            }
             i += 1;
         }
-        if plain.is_empty() && i < chars.len() {
-            plain.push(chars[i]);
+        if plain_start == i && i < chars.len() {
+            push_inline_text_char(&mut out, chars[i]);
             i += 1;
+            continue;
         }
+        let plain = plain.unwrap_or_else(|| chars_to_string(&chars[plain_start..i]));
         push_inline_part(
             &mut out,
             InlinePart::Node(Inline::Text(normalize_inline_plain_text(plain))),
@@ -328,19 +1618,70 @@ fn parse_inline_with_refs_mode(
     };
 
     if allow_bare_autolinks && gfm {
-        apply_gfm_bare_autolinks(nodes)
+        apply_gfm_bare_autolinks(nodes, input)
     } else {
         nodes
     }
 }
 
 #[inline]
-fn is_token_start(chars: &[char], i: usize) -> bool {
+fn is_token_start(chars: &[char], i: usize, gfm: bool) -> bool {
     let c = chars[i];
-    matches!(
-        c,
-        '\\' | '*' | '_' | '[' | '!' | '`' | '\n' | '~' | '>' | '<' | '&'
-    )
+    match c {
+        '\\' | '*' | '_' | '[' | '`' => true,
+        '~' => gfm,
+        '!' => chars.get(i + 1) == Some(&'['),
+        '<' => {
+            let Some(next) = chars.get(i + 1) else {
+                return false;
+            };
+            if matches!(*next, '/' | '!' | '?') || next.is_ascii_alphabetic() {
+                return true;
+            }
+
+            // Email autolinks like `<1@ex.com>` or `<_@ex.com>`.
+            if next.is_ascii_alphanumeric() || matches!(*next, '.' | '_' | '+' | '-') {
+                let mut j = i + 2;
+                let mut saw_at = false;
+                while j < chars.len() {
+                    let ch = chars[j];
+                    if ch == '@' {
+                        saw_at = true;
+                    }
+                    if ch == '>' {
+                        return saw_at;
+                    }
+                    if ch.is_whitespace() || ch == '<' {
+                        return false;
+                    }
+                    j += 1;
+                }
+            }
+
+            false
+        }
+        '&' => {
+            // Only treat as a token start if it could be a character reference (`&...;`).
+            // This avoids breaking plain runs on common text like `AT&T`.
+            let Some(next) = chars.get(i + 1) else {
+                return false;
+            };
+            if !(*next == '#' || next.is_ascii_alphabetic()) {
+                return false;
+            }
+
+            let mut j = i + 2;
+            while j < chars.len() {
+                match chars[j] {
+                    ';' => return true,
+                    '&' | ' ' | '\t' | '\n' | '\r' => return false,
+                    _ => j += 1,
+                }
+            }
+            false
+        }
+        _ => false,
+    }
 }
 
 fn inline_nodes_contain_link(nodes: &[Inline]) -> bool {
@@ -360,25 +1701,201 @@ fn parse_inline_fragment(
     pedantic: bool,
     refs: Option<&HashMap<String, ReferenceDefinition>>,
 ) -> Vec<Inline> {
-    if input.is_empty() {
-        return Vec::new();
-    }
-
-    if !inline_fragment_needs_parse(input) {
-        return vec![Inline::Text(normalize_inline_plain_text(input.to_string()))];
-    }
-
-    parse_inline_with_refs_mode(input, gfm, pedantic, refs, false)
+    parse_inline_with_refs_mode(input, gfm, pedantic, refs, false, false)
 }
 
 #[inline]
-fn inline_fragment_needs_parse(input: &str) -> bool {
-    input.as_bytes().iter().any(|byte| {
-        matches!(
-            *byte,
-            92 | b'*' | b'_' | b'[' | b'!' | b'`' | 10 | 13 | b'~' | b'>' | b'<' | b'&'
-        )
-    })
+fn inline_plain_text_needs_normalize(raw: &str) -> bool {
+    raw.contains(") ") && raw.contains('(')
+}
+
+#[inline]
+fn inline_plain_text_from_span(input: &str, span: Span) -> Inline {
+    let raw = span.as_str(input);
+    if inline_plain_text_needs_normalize(raw) {
+        Inline::Text(normalize_inline_plain_text(raw.to_string()))
+    } else {
+        Inline::TextSpan(span)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct InlineFragmentScan {
+    needs_parse: bool,
+    is_ascii: bool,
+}
+
+#[inline]
+fn inline_fragment_scan(input: &str, gfm: bool) -> InlineFragmentScan {
+    let bytes = input.as_bytes();
+    let mut is_ascii = true;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] >= 0x80 {
+            is_ascii = false;
+            i += 1;
+            continue;
+        }
+
+        match bytes[i] {
+            b'\n' | b'\r' => {
+                if !is_ascii {
+                    return InlineFragmentScan {
+                        needs_parse: true,
+                        is_ascii: false,
+                    };
+                }
+                return InlineFragmentScan {
+                    needs_parse: true,
+                    is_ascii: bytes[i + 1..].is_ascii(),
+                };
+            }
+            b'\\' => {
+                if let Some(next) = bytes.get(i + 1) {
+                    if *next == b'\n' || next.is_ascii_punctuation() {
+                        if !is_ascii {
+                            return InlineFragmentScan {
+                                needs_parse: true,
+                                is_ascii: false,
+                            };
+                        }
+                        return InlineFragmentScan {
+                            needs_parse: true,
+                            is_ascii: bytes[i + 1..].is_ascii(),
+                        };
+                    }
+                }
+            }
+            b'*' | b'_' | b'[' | b'`' => {
+                if !is_ascii {
+                    return InlineFragmentScan {
+                        needs_parse: true,
+                        is_ascii: false,
+                    };
+                }
+                return InlineFragmentScan {
+                    needs_parse: true,
+                    is_ascii: bytes[i + 1..].is_ascii(),
+                };
+            }
+            b'~' => {
+                if gfm {
+                    if !is_ascii {
+                        return InlineFragmentScan {
+                            needs_parse: true,
+                            is_ascii: false,
+                        };
+                    }
+                    return InlineFragmentScan {
+                        needs_parse: true,
+                        is_ascii: bytes[i + 1..].is_ascii(),
+                    };
+                }
+            }
+            b'!' => {
+                if bytes.get(i + 1) == Some(&b'[') {
+                    if !is_ascii {
+                        return InlineFragmentScan {
+                            needs_parse: true,
+                            is_ascii: false,
+                        };
+                    }
+                    return InlineFragmentScan {
+                        needs_parse: true,
+                        is_ascii: bytes[i + 1..].is_ascii(),
+                    };
+                }
+            }
+            b'<' => {
+                let Some(next) = bytes.get(i + 1) else {
+                    i += 1;
+                    continue;
+                };
+                if matches!(*next, b'/' | b'!' | b'?') || next.is_ascii_alphabetic() {
+                    if !is_ascii {
+                        return InlineFragmentScan {
+                            needs_parse: true,
+                            is_ascii: false,
+                        };
+                    }
+                    return InlineFragmentScan {
+                        needs_parse: true,
+                        is_ascii: bytes[i + 1..].is_ascii(),
+                    };
+                }
+
+                // Email autolinks like `<1@ex.com>` or `<_@ex.com>`.
+                if next.is_ascii_alphanumeric() || matches!(*next, b'.' | b'_' | b'+' | b'-') {
+                    let mut j = i + 2;
+                    let mut saw_at = false;
+                    while j < bytes.len() {
+                        let b = bytes[j];
+                        if b == b'@' {
+                            saw_at = true;
+                        }
+                        if b == b'>' {
+                            if saw_at {
+                                if !is_ascii {
+                                    return InlineFragmentScan {
+                                        needs_parse: true,
+                                        is_ascii: false,
+                                    };
+                                }
+                                return InlineFragmentScan {
+                                    needs_parse: true,
+                                    is_ascii: bytes[i + 1..].is_ascii(),
+                                };
+                            }
+                            break;
+                        }
+                        if b.is_ascii_whitespace() || b == b'<' {
+                            break;
+                        }
+                        j += 1;
+                    }
+                }
+            }
+            b'&' => {
+                // Only treat as a token start if it could be a character reference (`&...;`).
+                let Some(next) = bytes.get(i + 1) else {
+                    i += 1;
+                    continue;
+                };
+                if !(*next == b'#' || next.is_ascii_alphabetic()) {
+                    i += 1;
+                    continue;
+                }
+
+                let mut j = i + 2;
+                while j < bytes.len() {
+                    match bytes[j] {
+                        b';' => {
+                            if !is_ascii {
+                                return InlineFragmentScan {
+                                    needs_parse: true,
+                                    is_ascii: false,
+                                };
+                            }
+                            return InlineFragmentScan {
+                                needs_parse: true,
+                                is_ascii: bytes[i + 1..].is_ascii(),
+                            };
+                        }
+                        b'&' | b' ' | b'\t' | b'\n' | b'\r' => break,
+                        _ => j += 1,
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        i += 1;
+    }
+
+    InlineFragmentScan {
+        needs_parse: false,
+        is_ascii,
+    }
 }
 
 #[derive(Clone)]
@@ -390,6 +1907,7 @@ enum InlinePart {
         original_len: usize,
         can_open: bool,
         can_close: bool,
+        span: Option<Span>,
     },
 }
 
@@ -406,6 +1924,18 @@ fn push_inline_part(out: &mut Vec<InlinePart>, part: InlinePart) {
                 out.push(InlinePart::Node(Inline::Text(text)));
             }
         }
+        InlinePart::Node(Inline::TextSpan(span)) => {
+            if span.start == span.end {
+                return;
+            }
+            if let Some(InlinePart::Node(Inline::TextSpan(last))) = out.last_mut() {
+                if last.end == span.start {
+                    last.end = span.end;
+                    return;
+                }
+            }
+            out.push(InlinePart::Node(Inline::TextSpan(span)));
+        }
         _ => out.push(part),
     }
 }
@@ -418,7 +1948,11 @@ fn inline_text_part_from_char(ch: char) -> InlinePart {
 
 #[inline]
 fn push_inline_text_char(out: &mut Vec<InlinePart>, ch: char) {
-    push_inline_part(out, inline_text_part_from_char(ch));
+    if let Some(InlinePart::Node(Inline::Text(last))) = out.last_mut() {
+        last.push(ch);
+        return;
+    }
+    out.push(inline_text_part_from_char(ch));
 }
 
 fn parse_delimiter_run(chars: &[char], start: usize, gfm: bool) -> Option<(InlinePart, usize)> {
@@ -445,6 +1979,7 @@ fn parse_delimiter_run(chars: &[char], start: usize, gfm: bool) -> Option<(Inlin
             original_len: run_len,
             can_open,
             can_close,
+            span: None,
         }
     } else {
         InlinePart::Node(Inline::Text(chars_to_string(
@@ -460,7 +1995,15 @@ fn inline_parts_into_nodes(parts: Vec<InlinePart>) -> Vec<Inline> {
     for part in parts {
         match part {
             InlinePart::Node(node) => push_inline_node(&mut out, node),
-            InlinePart::Delimiter { marker, len, .. } => {
+            InlinePart::Delimiter {
+                span: Some(span), ..
+            } => push_inline_node(&mut out, Inline::TextSpan(span)),
+            InlinePart::Delimiter {
+                marker,
+                len,
+                span: None,
+                ..
+            } => {
                 let mut s = String::with_capacity(len);
                 for _ in 0..len {
                     s.push(marker);
@@ -489,6 +2032,18 @@ fn push_inline_node(out: &mut Vec<Inline>, node: Inline) {
                 out.push(Inline::Text(text));
             }
         }
+        Inline::TextSpan(span) => {
+            if span.start == span.end {
+                return;
+            }
+            if let Some(Inline::TextSpan(last)) = out.last_mut() {
+                if last.end == span.start {
+                    last.end = span.end;
+                    return;
+                }
+            }
+            out.push(Inline::TextSpan(span));
+        }
         _ => out.push(node),
     }
 }
@@ -496,7 +2051,6 @@ fn push_inline_node(out: &mut Vec<Inline>, node: Inline) {
 #[derive(Clone, Copy)]
 struct TextAtom {
     raw_start: usize,
-    raw_end: usize,
     ch: char,
 }
 
@@ -505,31 +2059,45 @@ struct BareAutolinkCandidate {
     href: String,
 }
 
-fn apply_gfm_bare_autolinks(nodes: Vec<Inline>) -> Vec<Inline> {
-    if !nodes_may_have_bare_autolinks(&nodes) {
+struct BareAutolinkByteCandidate {
+    span: Span,
+    href: String,
+}
+
+fn apply_gfm_bare_autolinks(nodes: Vec<Inline>, source: &str) -> Vec<Inline> {
+    if !nodes_may_have_bare_autolinks(&nodes, source) {
         return nodes;
     }
     let mut stack = Vec::new();
-    apply_gfm_bare_autolinks_with_stack(nodes, &mut stack)
+    apply_gfm_bare_autolinks_with_stack(nodes, &mut stack, source)
 }
 
-fn nodes_may_have_bare_autolinks(nodes: &[Inline]) -> bool {
+fn nodes_may_have_bare_autolinks(nodes: &[Inline], source: &str) -> bool {
     nodes.iter().any(|node| match node {
-        Inline::Text(text) => text_may_have_bare_autolink(text),
+        Inline::Text(text) => text_may_have_bare_autolink_candidate(text),
+        Inline::TextSpan(span) => text_may_have_bare_autolink_candidate(span.as_str(source)),
         Inline::Em(children) | Inline::Strong(children) | Inline::Del(children) => {
-            nodes_may_have_bare_autolinks(children)
+            nodes_may_have_bare_autolinks(children, source)
         }
         _ => false,
     })
 }
 
-fn apply_gfm_bare_autolinks_with_stack(nodes: Vec<Inline>, stack: &mut Vec<String>) -> Vec<Inline> {
+fn apply_gfm_bare_autolinks_with_stack(
+    nodes: Vec<Inline>,
+    stack: &mut Vec<String>,
+    source: &str,
+) -> Vec<Inline> {
     let mut out = Vec::with_capacity(nodes.len());
     for node in nodes {
         match node {
             Inline::RawHtml(html) => {
                 update_inline_html_stack(&html, stack);
                 out.push(Inline::RawHtml(html));
+            }
+            Inline::RawHtmlSpan(span) => {
+                update_inline_html_stack(span.as_str(source), stack);
+                out.push(Inline::RawHtmlSpan(span));
             }
             Inline::Text(text) => {
                 if should_skip_bare_autolink(stack) {
@@ -540,12 +2108,21 @@ fn apply_gfm_bare_autolinks_with_stack(nodes: Vec<Inline>, stack: &mut Vec<Strin
                     }
                 }
             }
+            Inline::TextSpan(span) => {
+                if should_skip_bare_autolink(stack) {
+                    push_inline_node(&mut out, Inline::TextSpan(span));
+                } else {
+                    for node in autolink_text_nodes_span(source, span) {
+                        push_inline_node(&mut out, node);
+                    }
+                }
+            }
             Inline::Em(children) => {
                 if should_skip_bare_autolink(stack) {
                     out.push(Inline::Em(children));
                 } else {
                     out.push(Inline::Em(apply_gfm_bare_autolinks_with_stack(
-                        children, stack,
+                        children, stack, source,
                     )));
                 }
             }
@@ -554,7 +2131,7 @@ fn apply_gfm_bare_autolinks_with_stack(nodes: Vec<Inline>, stack: &mut Vec<Strin
                     out.push(Inline::Strong(children));
                 } else {
                     out.push(Inline::Strong(apply_gfm_bare_autolinks_with_stack(
-                        children, stack,
+                        children, stack, source,
                     )));
                 }
             }
@@ -563,7 +2140,7 @@ fn apply_gfm_bare_autolinks_with_stack(nodes: Vec<Inline>, stack: &mut Vec<Strin
                     out.push(Inline::Del(children));
                 } else {
                     out.push(Inline::Del(apply_gfm_bare_autolinks_with_stack(
-                        children, stack,
+                        children, stack, source,
                     )));
                 }
             }
@@ -573,9 +2150,80 @@ fn apply_gfm_bare_autolinks_with_stack(nodes: Vec<Inline>, stack: &mut Vec<Strin
     out
 }
 
+fn autolink_text_nodes_span(source: &str, span: Span) -> Vec<Inline> {
+    let text = span.as_str(source);
+    if text.is_empty() || !text_may_have_bare_autolink_candidate(text) {
+        return vec![Inline::TextSpan(span)];
+    }
+
+    if text.is_ascii() {
+        return autolink_text_nodes_ascii_span(source, span);
+    }
+
+    autolink_text_nodes(text.to_string())
+}
+
+fn autolink_text_nodes_ascii_span(source: &str, span: Span) -> Vec<Inline> {
+    let text = span.as_str(source);
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut last_raw = 0usize;
+    let mut i = 0usize;
+    let mut found = false;
+
+    while i < bytes.len() {
+        let Some(candidate) = parse_bare_autolink_candidate_ascii(bytes, i, text) else {
+            i += 1;
+            continue;
+        };
+
+        let candidate_span = candidate.span;
+        if candidate_span.start > last_raw {
+            push_inline_node(
+                &mut out,
+                Inline::TextSpan(Span::new(
+                    span.start + last_raw,
+                    span.start + candidate_span.start,
+                )),
+            );
+        }
+
+        let abs_span = Span::new(
+            span.start + candidate_span.start,
+            span.start + candidate_span.end,
+        );
+        out.push(Inline::Link {
+            label: vec![Inline::TextSpan(abs_span)],
+            href: candidate.href,
+            title: None,
+        });
+
+        last_raw = candidate_span.end;
+        i = candidate_span.end;
+        found = true;
+    }
+
+    if !found {
+        return vec![Inline::TextSpan(span)];
+    }
+
+    if last_raw < bytes.len() {
+        push_inline_node(
+            &mut out,
+            Inline::TextSpan(Span::new(span.start + last_raw, span.end)),
+        );
+    }
+
+    out
+}
+
 fn autolink_text_nodes(text: String) -> Vec<Inline> {
-    if text.is_empty() || !text_may_have_bare_autolink(&text) {
+    if text.is_empty() || !text_may_have_bare_autolink_candidate(&text) {
         return vec![Inline::Text(text)];
+    }
+
+    if text.is_ascii() {
+        return autolink_text_nodes_ascii(text);
     }
 
     let atoms = text_atoms(&text);
@@ -595,7 +2243,10 @@ fn autolink_text_nodes(text: String) -> Vec<Inline> {
         };
 
         let raw_start = atoms[i].raw_start;
-        let raw_end = atoms[candidate.end - 1].raw_end;
+        let raw_end = atoms
+            .get(candidate.end)
+            .map(|atom| atom.raw_start)
+            .unwrap_or(text.len());
         if raw_start > last_raw {
             push_inline_node(
                 &mut out,
@@ -625,10 +2276,345 @@ fn autolink_text_nodes(text: String) -> Vec<Inline> {
     out
 }
 
+fn autolink_text_nodes_ascii(text: String) -> Vec<Inline> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut last_raw = 0usize;
+    let mut i = 0usize;
+    let mut found = false;
+
+    while i < bytes.len() {
+        let Some(candidate) = parse_bare_autolink_candidate_ascii(bytes, i, &text) else {
+            i += 1;
+            continue;
+        };
+
+        let span = candidate.span;
+        if span.start > last_raw {
+            push_inline_node(
+                &mut out,
+                Inline::Text(text[last_raw..span.start].to_string()),
+            );
+        }
+
+        let label = span.as_str(&text).to_string();
+        out.push(Inline::Link {
+            label: vec![Inline::Text(label)],
+            href: candidate.href,
+            title: None,
+        });
+        last_raw = span.end;
+        i = span.end;
+        found = true;
+    }
+
+    if !found {
+        return vec![Inline::Text(text)];
+    }
+
+    if last_raw < text.len() {
+        push_inline_node(&mut out, Inline::Text(text[last_raw..].to_string()));
+    }
+
+    out
+}
+
+fn parse_bare_autolink_candidate_ascii(
+    bytes: &[u8],
+    start: usize,
+    text: &str,
+) -> Option<BareAutolinkByteCandidate> {
+    if !bare_autolink_start_boundary_byte(bytes, start) {
+        return None;
+    }
+
+    parse_bare_url_candidate_ascii(bytes, start, text)
+        .or_else(|| parse_bare_email_candidate_ascii(bytes, start, text))
+}
+
+fn bare_autolink_start_boundary_byte(bytes: &[u8], start: usize) -> bool {
+    if start == 0 {
+        return true;
+    }
+
+    !matches!(
+        bytes[start - 1],
+        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'@' | b'.' | b'_' | b'-' | b'/' | b':'
+    )
+}
+
+fn parse_bare_url_candidate_ascii(
+    bytes: &[u8],
+    start: usize,
+    text: &str,
+) -> Option<BareAutolinkByteCandidate> {
+    if starts_with_www_bytes(bytes, start) {
+        let end = trim_generic_url_end_bytes(bytes, start, scan_url_end_bytes(bytes, start));
+        if end <= start + 4 {
+            return None;
+        }
+        return Some(BareAutolinkByteCandidate {
+            span: Span::new(start, end),
+            href: format!("http://{}", &text[start..end]),
+        });
+    }
+
+    let scheme_end = parse_scheme_prefix_bytes(bytes, start)?;
+    if scheme_end >= bytes.len() || bytes[scheme_end].is_ascii_whitespace() {
+        return None;
+    }
+
+    if bytes[start..scheme_end].eq_ignore_ascii_case(b"mailto") {
+        return parse_emailish_scheme_candidate_ascii(bytes, start, scheme_end + 1, false, text);
+    }
+    if bytes[start..scheme_end].eq_ignore_ascii_case(b"xmpp") {
+        return parse_emailish_scheme_candidate_ascii(bytes, start, scheme_end + 1, true, text);
+    }
+
+    let end = trim_generic_url_end_bytes(bytes, start, scan_url_end_bytes(bytes, start));
+    if end <= scheme_end + 1 {
+        return None;
+    }
+
+    Some(BareAutolinkByteCandidate {
+        span: Span::new(start, end),
+        href: text[start..end].to_string(),
+    })
+}
+
+fn parse_emailish_scheme_candidate_ascii(
+    bytes: &[u8],
+    start: usize,
+    body_start: usize,
+    allow_xmpp_path: bool,
+    text: &str,
+) -> Option<BareAutolinkByteCandidate> {
+    let email_end = parse_email_body_bytes(bytes, body_start)?;
+    let mut end = email_end;
+
+    if allow_xmpp_path && end < bytes.len() && bytes[end] == b'/' {
+        let mut path_end = end + 1;
+        while path_end < bytes.len() && is_email_path_byte(bytes[path_end]) {
+            path_end += 1;
+        }
+        if path_end > end + 1 {
+            end = path_end;
+        }
+    }
+
+    if matches!(bytes.get(end).copied(), Some(b'-' | b'_')) {
+        return None;
+    }
+
+    Some(BareAutolinkByteCandidate {
+        span: Span::new(start, end),
+        href: text[start..end].to_string(),
+    })
+}
+
+fn parse_bare_email_candidate_ascii(
+    bytes: &[u8],
+    start: usize,
+    text: &str,
+) -> Option<BareAutolinkByteCandidate> {
+    let end = parse_email_body_bytes(bytes, start)?;
+    if matches!(bytes.get(end).copied(), Some(b'-' | b'_')) {
+        return None;
+    }
+
+    Some(BareAutolinkByteCandidate {
+        span: Span::new(start, end),
+        href: format!("mailto:{}", &text[start..end]),
+    })
+}
+
+fn parse_email_body_bytes(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut i = start;
+    while i < bytes.len() && is_email_local_byte(bytes[i]) {
+        i += 1;
+    }
+    if i == start || i >= bytes.len() || bytes[i] != b'@' {
+        return None;
+    }
+    i += 1;
+
+    let mut labels = 0usize;
+    loop {
+        let label_start = i;
+        while i < bytes.len() && is_domain_label_byte(bytes[i]) {
+            i += 1;
+        }
+        if i == label_start {
+            return None;
+        }
+        if bytes[label_start] == b'-' || bytes[i - 1] == b'-' {
+            return None;
+        }
+        labels += 1;
+        if i < bytes.len() && bytes[i] == b'.' {
+            if i + 1 >= bytes.len() || !is_domain_label_byte(bytes[i + 1]) {
+                break;
+            }
+            i += 1;
+            continue;
+        }
+        break;
+    }
+
+    if labels < 2 {
+        return None;
+    }
+
+    Some(i)
+}
+
+fn starts_with_www_bytes(bytes: &[u8], start: usize) -> bool {
+    bytes.get(start..start + 4) == Some(b"www.")
+}
+
+fn parse_scheme_prefix_bytes(bytes: &[u8], start: usize) -> Option<usize> {
+    let first = *bytes.get(start)?;
+    if !first.is_ascii_alphabetic() {
+        return None;
+    }
+
+    let mut i = start + 1;
+    while i < bytes.len()
+        && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'+' | b'-' | b'.'))
+    {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b':' {
+        return None;
+    }
+
+    let len = i - start;
+    if !(2..=32).contains(&len) {
+        return None;
+    }
+
+    Some(i)
+}
+
+fn scan_url_end_bytes(bytes: &[u8], start: usize) -> usize {
+    let mut end = start;
+    while end < bytes.len() {
+        let byte = bytes[end];
+        if byte.is_ascii_whitespace() || byte == b'<' {
+            break;
+        }
+        end += 1;
+    }
+    end
+}
+
+fn trim_generic_url_end_bytes(bytes: &[u8], start: usize, mut end: usize) -> usize {
+    loop {
+        if end <= start {
+            return end;
+        }
+
+        let last = bytes[end - 1];
+        let mut trimmed = false;
+
+        if matches!(last, b'.' | b',' | b':' | b'!' | b'?' | b'"' | b'\'') {
+            end -= 1;
+            trimmed = true;
+        } else if last == b';' {
+            if let Some(entity_start) = entity_like_suffix_start_bytes(bytes, start, end) {
+                end = entity_start;
+            } else {
+                end -= 1;
+            }
+            trimmed = true;
+        } else if last == b')' && unmatched_closing_parens_bytes(bytes, start, end) > 0 {
+            end -= 1;
+            trimmed = true;
+        }
+
+        if !trimmed {
+            break;
+        }
+    }
+
+    end
+}
+
+fn entity_like_suffix_start_bytes(bytes: &[u8], start: usize, end: usize) -> Option<usize> {
+    if end <= start || bytes[end - 1] != b';' {
+        return None;
+    }
+
+    let mut i = end - 1;
+    while i > start && bytes[i - 1].is_ascii_alphanumeric() {
+        i -= 1;
+    }
+    if i > start && bytes[i - 1] == b'&' && i < end - 1 {
+        return Some(i - 1);
+    }
+    None
+}
+
+fn unmatched_closing_parens_bytes(bytes: &[u8], start: usize, end: usize) -> usize {
+    let opens = bytes[start..end].iter().filter(|&&b| b == b'(').count();
+    let closes = bytes[start..end].iter().filter(|&&b| b == b')').count();
+    closes.saturating_sub(opens)
+}
+
+fn is_email_local_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-')
+}
+
+fn is_domain_label_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'-'
+}
+
+fn is_email_path_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-' | b'@')
+}
+
 fn text_may_have_bare_autolink(text: &str) -> bool {
     text.as_bytes()
         .iter()
         .any(|byte| matches!(*byte, b':' | b'@' | b'.'))
+}
+
+fn text_may_have_bare_autolink_candidate(text: &str) -> bool {
+    if !text_may_have_bare_autolink(text) {
+        return false;
+    }
+
+    let bytes = text.as_bytes();
+    if bytes.windows(4).any(|window| window == b"www.") {
+        return true;
+    }
+
+    if bytes.contains(&b'@') {
+        return true;
+    }
+
+    for idx in 0..bytes.len() {
+        if bytes[idx] != b':' || idx + 1 >= bytes.len() || bytes[idx + 1].is_ascii_whitespace() {
+            continue;
+        }
+
+        let mut start = idx;
+        while start > 0 && is_bare_autolink_scheme_byte(bytes[start - 1]) {
+            start -= 1;
+        }
+
+        let len = idx - start;
+        if (2..=32).contains(&len) && bytes[start].is_ascii_alphabetic() {
+            return true;
+        }
+    }
+
+    false
+}
+
+#[inline]
+fn is_bare_autolink_scheme_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.')
 }
 
 fn should_skip_bare_autolink(stack: &[String]) -> bool {
@@ -712,10 +2698,8 @@ fn text_atoms(text: &str) -> Vec<TextAtom> {
     let mut atoms = Vec::with_capacity(text.len());
     let mut indices = text.char_indices().peekable();
     while let Some((start, ch)) = indices.next() {
-        let end = indices.peek().map(|(idx, _)| *idx).unwrap_or(text.len());
         atoms.push(TextAtom {
             raw_start: start,
-            raw_end: end,
             ch,
         });
     }
@@ -755,13 +2739,16 @@ fn parse_bare_url_candidate(atoms: &[TextAtom], start: usize) -> Option<BareAuto
         });
     }
 
-    let (scheme_end, scheme) = parse_scheme_prefix_atoms(atoms, start)?;
+    let scheme_end = parse_scheme_prefix_atoms(atoms, start)?;
     if scheme_end >= atoms.len() || atoms[scheme_end].ch.is_whitespace() {
         return None;
     }
 
-    if scheme.eq_ignore_ascii_case("mailto") || scheme.eq_ignore_ascii_case("xmpp") {
-        return parse_emailish_scheme_candidate_atoms(atoms, start, scheme_end + 1, &scheme);
+    if scheme_atoms_eq_ignore_ascii_case(atoms, start, scheme_end, "mailto") {
+        return parse_emailish_scheme_candidate_atoms(atoms, start, scheme_end + 1, false);
+    }
+    if scheme_atoms_eq_ignore_ascii_case(atoms, start, scheme_end, "xmpp") {
+        return parse_emailish_scheme_candidate_atoms(atoms, start, scheme_end + 1, true);
     }
 
     let end = trim_generic_url_end_atoms(atoms, start, scan_url_end_atoms(atoms, start));
@@ -779,12 +2766,12 @@ fn parse_emailish_scheme_candidate_atoms(
     atoms: &[TextAtom],
     start: usize,
     body_start: usize,
-    scheme: &str,
+    allow_xmpp_path: bool,
 ) -> Option<BareAutolinkCandidate> {
     let email_end = parse_email_body_atoms(atoms, body_start)?;
     let mut end = email_end;
 
-    if scheme.eq_ignore_ascii_case("xmpp") && end < atoms.len() && atoms[end].ch == '/' {
+    if allow_xmpp_path && end < atoms.len() && atoms[end].ch == '/' {
         let mut path_end = end + 1;
         while path_end < atoms.len() && is_email_path_char(atoms[path_end].ch) {
             path_end += 1;
@@ -868,7 +2855,7 @@ fn starts_with_www_atoms(atoms: &[TextAtom], start: usize) -> bool {
     )
 }
 
-fn parse_scheme_prefix_atoms(atoms: &[TextAtom], start: usize) -> Option<(usize, String)> {
+fn parse_scheme_prefix_atoms(atoms: &[TextAtom], start: usize) -> Option<usize> {
     let first = atoms.get(start)?.ch;
     if !first.is_ascii_alphabetic() {
         return None;
@@ -889,7 +2876,20 @@ fn parse_scheme_prefix_atoms(atoms: &[TextAtom], start: usize) -> Option<(usize,
         return None;
     }
 
-    Some((i, collect_decoded_atoms(atoms, start, i)))
+    Some(i)
+}
+
+fn scheme_atoms_eq_ignore_ascii_case(
+    atoms: &[TextAtom],
+    start: usize,
+    end: usize,
+    expected: &str,
+) -> bool {
+    end.saturating_sub(start) == expected.len()
+        && atoms[start..end]
+            .iter()
+            .zip(expected.chars())
+            .all(|(atom, expected_ch)| atom.ch.eq_ignore_ascii_case(&expected_ch))
 }
 
 fn scan_url_end_atoms(atoms: &[TextAtom], start: usize) -> usize {
@@ -990,6 +2990,7 @@ fn resolve_delimiter_runs(mut parts: Vec<InlinePart>) -> Vec<InlinePart> {
                 original_len: closer_original_len,
                 can_open: closer_can_open,
                 can_close,
+                span: _,
             } = &parts[closer_idx]
             else {
                 continue;
@@ -1028,6 +3029,7 @@ fn resolve_delimiter_runs(mut parts: Vec<InlinePart>) -> Vec<InlinePart> {
             original_len: opener_original_len,
             can_open: opener_can_open,
             can_close: opener_can_close,
+            span: opener_span,
             ..
         } = opener
         else {
@@ -1039,6 +3041,7 @@ fn resolve_delimiter_runs(mut parts: Vec<InlinePart>) -> Vec<InlinePart> {
             original_len: closer_original_len,
             can_open: closer_can_open,
             can_close: closer_can_close,
+            span: closer_span,
             ..
         } = closer
         else {
@@ -1053,24 +3056,28 @@ fn resolve_delimiter_runs(mut parts: Vec<InlinePart>) -> Vec<InlinePart> {
         };
 
         if opener_len > use_len {
+            let remaining = opener_len - use_len;
             parts.push(InlinePart::Delimiter {
                 marker,
-                len: opener_len - use_len,
+                len: remaining,
                 original_len: opener_original_len,
                 can_open: opener_can_open,
                 can_close: opener_can_close,
+                span: opener_span.map(|span| Span::new(span.start, span.start + remaining)),
             });
         }
 
         parts.push(InlinePart::Node(wrapped));
 
         if closer_len > use_len {
+            let remaining = closer_len - use_len;
             parts.push(InlinePart::Delimiter {
                 marker,
-                len: closer_len - use_len,
+                len: remaining,
                 original_len: closer_original_len,
                 can_open: closer_can_open,
                 can_close: closer_can_close,
+                span: closer_span.map(|span| Span::new(span.end - remaining, span.end)),
             });
         }
 
@@ -1093,6 +3100,7 @@ fn find_matching_opener(
             original_len: opener_original_len,
             can_open,
             can_close: opener_can_close,
+            span: _,
         } = &parts[opener_idx]
         else {
             continue;
@@ -1178,6 +3186,7 @@ fn should_defer_ambiguous_closer(
                 original_len: later_original_len,
                 can_open: later_can_open,
                 can_close: later_can_close,
+                span: _,
             } if *later_marker == marker && *later_can_close => delimiter_runs_can_pair(
                 marker,
                 opener_len,
@@ -1494,7 +3503,7 @@ fn find_matching_bracket(chars: &[char], start: usize, open: char, close: char) 
 
         if ch == '`' {
             let run_len = count_consecutive(chars, i, '`');
-            if let Some(end) = find_code_span_end(chars, i) {
+            if let Some(end) = find_code_span_end_with_open_len(chars, i, run_len) {
                 i = end + 1;
                 continue;
             }
@@ -1538,7 +3547,7 @@ fn parse_code_span(chars: &[char], start: usize) -> Option<(String, usize)> {
     }
 
     let content_start = start + open_len;
-    let close = find_code_span_end(chars, start)?;
+    let close = find_code_span_end_with_open_len(chars, start, open_len)?;
     let close_start = close + 1 - open_len;
     let raw_code: String = chars_to_string(&chars[content_start..close_start]);
 
@@ -1560,8 +3569,11 @@ fn chars_to_string(chars: &[char]) -> String {
     out
 }
 
-fn find_code_span_end(chars: &[char], start: usize) -> Option<usize> {
-    let open_len = count_consecutive(chars, start, '`');
+fn find_code_span_end_with_open_len(
+    chars: &[char],
+    start: usize,
+    open_len: usize,
+) -> Option<usize> {
     if open_len == 0 || start + open_len > chars.len() {
         return None;
     }
@@ -1668,9 +3680,17 @@ fn normalize_autolink_destination(raw: &str) -> Option<String> {
         return Some(String::new());
     }
 
-    Some(percent_encode_autolink_destination(&decode_html_entities(
-        raw,
-    )))
+    if !autolink_destination_needs_normalization(raw) {
+        return Some(raw.to_string());
+    }
+
+    let decoded = if raw.contains('&') {
+        decode_html_entities(raw)
+    } else {
+        raw.to_string()
+    };
+
+    Some(percent_encode_autolink_destination(&decoded))
 }
 
 fn percent_encode_autolink_destination(raw: &str) -> String {
@@ -1719,8 +3739,9 @@ fn parse_quoted_autolink_like(chars: &[char], start: usize) -> Option<(String, S
                 close -= 1;
                 continue;
             }
-            if is_autolink_uri(&inner) || is_autolink_email(&inner) {
-                let href = if is_autolink_email(&inner) {
+            let is_email = is_autolink_email(&inner);
+            if is_autolink_uri(&inner) || is_email {
+                let href = if is_email {
                     format!("mailto:{inner}")
                 } else {
                     inner.clone()
@@ -1732,6 +3753,16 @@ fn parse_quoted_autolink_like(chars: &[char], start: usize) -> Option<(String, S
     }
 
     None
+}
+
+fn autolink_destination_needs_normalization(raw: &str) -> bool {
+    !raw.is_ascii()
+        || raw.as_bytes().iter().any(|&b| {
+            matches!(
+                b,
+                b'&' | b' ' | b'"' | b'\\' | b'[' | b']' | b'<' | b'>' | b'`'
+            ) || b.is_ascii_control()
+        })
 }
 
 fn is_autolink_uri(raw: &str) -> bool {

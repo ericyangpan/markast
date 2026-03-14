@@ -6,6 +6,7 @@ pub(crate) enum Document {
 #[derive(Debug, Clone)]
 pub(crate) enum Block {
     Paragraph {
+        source: String,
         inlines: Vec<inline::Inline>,
     },
     Heading {
@@ -48,13 +49,18 @@ pub(crate) enum TableAlignment {
 }
 
 pub(crate) mod inline {
+    use crate::markdown::span::Span;
+
     #[derive(Debug, Clone)]
     pub(crate) enum Inline {
         Text(String),
+        TextSpan(Span),
         RawHtml(String),
+        RawHtmlSpan(Span),
         SoftBreak,
         HardBreak,
         Code(String),
+        CodeSpan(Span),
         Em(Vec<Inline>),
         Strong(Vec<Inline>),
         Del(Vec<Inline>),

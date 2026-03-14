@@ -1,7 +1,6 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use crate::markdown::ast::{self, inline::Inline};
-use crate::markdown::lexer::Line;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ReferenceDefinition {
@@ -109,16 +108,6 @@ impl BlockParseContext {
         }
 
         parse_blocks_from_lines_mode(lines, gfm, pedantic, &mut self.refs, allow_ref_defs, true)
-    }
-
-    pub(crate) fn parse_line_slices<'a>(
-        &mut self,
-        lines: &[Line<'a>],
-        gfm: bool,
-        pedantic: bool,
-    ) -> ast::Document {
-        let text_lines = lines.iter().map(|line| line.text).collect::<Vec<&'a str>>();
-        self.parse_lines(&text_lines, gfm, pedantic)
     }
 }
 
@@ -337,7 +326,7 @@ fn parse_blocks_from_lines_mode(
             continue;
         }
 
-        let (nodes, consumed) = parse_paragraph(
+        let (block, consumed) = parse_paragraph(
             &lines,
             i,
             gfm,
@@ -346,7 +335,7 @@ fn parse_blocks_from_lines_mode(
             allow_ref_defs,
             preserve_paragraph_leading_indent,
         );
-        blocks.push(ast::Block::Paragraph { inlines: nodes });
+        blocks.push(block);
         i = consumed;
     }
 
@@ -1944,8 +1933,7 @@ fn expand_tabs_html(line: &str) -> String {
 
 fn join_html_block_lines(lines: &[&str]) -> String {
     let mut out = String::with_capacity(
-        lines.iter().map(|line| line.len()).sum::<usize>()
-            + lines.len().saturating_sub(1),
+        lines.iter().map(|line| line.len()).sum::<usize>() + lines.len().saturating_sub(1),
     );
     for (idx, line) in lines.iter().copied().enumerate() {
         if idx > 0 {
@@ -2633,7 +2621,7 @@ fn parse_paragraph(
     refs: &mut HashMap<String, ReferenceDefinition>,
     allow_ref_defs: bool,
     preserve_leading_indent: bool,
-) -> (Vec<Inline>, usize) {
+) -> (ast::Block, usize) {
     let mut acc = String::new();
     let mut i = start;
 
@@ -2654,8 +2642,7 @@ fn parse_paragraph(
             || parse_fenced_code_block(lines, i).is_some()
             || (list_interrupts_paragraph(raw_line)
                 && parse_list_block(lines, i, gfm, pedantic, refs).is_some())
-            || (line_could_start_blockquote(raw_line)
-                && parse_blockquote_block(lines, i).is_some())
+            || (line_could_start_blockquote(raw_line) && parse_blockquote_block(lines, i).is_some())
             || parse_table_block(lines, i, gfm, pedantic, refs).is_some()
             || html_block_interrupts_paragraph(lines, i)
         {
@@ -2683,16 +2670,28 @@ fn parse_paragraph(
     if acc.is_empty() {
         if i == start {
             return (
-                parse_block_inlines(lines[start], gfm, pedantic, refs),
+                ast::Block::Paragraph {
+                    source: String::new(),
+                    inlines: parse_block_inlines(lines[start], gfm, pedantic, refs),
+                },
                 start + 1,
             );
         }
-        let trimmed = acc.trim_end_matches([' ', '\t']);
-        return (parse_block_inlines(trimmed, gfm, pedantic, refs), i);
     }
 
-    let trimmed = acc.trim_end_matches([' ', '\t']);
-    (parse_block_inlines(trimmed, gfm, pedantic, refs), i)
+    while matches!(acc.as_bytes().last(), Some(b' ' | b'\t')) {
+        acc.pop();
+    }
+
+    let inlines =
+        crate::markdown::inline::parse_inline_with_refs_spans(acc.as_str(), gfm, pedantic, refs);
+    (
+        ast::Block::Paragraph {
+            source: acc,
+            inlines,
+        },
+        i,
+    )
 }
 
 fn html_block_interrupts_paragraph(lines: &[&str], i: usize) -> bool {
@@ -2780,6 +2779,16 @@ fn normalize_block_inline_input(line: &str) -> Cow<'_, str> {
 }
 
 fn force_paragraph_line(line: &str) -> String {
+    // Keep the lazy-quote marker first so `strip_lazy_prefix` can remove it without
+    // losing the forced-paragraph marker.
+    if let Some(rest) = line.strip_prefix(LAZY_QUOTE_PREFIX) {
+        let mut out = String::with_capacity(line.len() + FORCED_PARAGRAPH_PREFIX.len_utf8());
+        out.push(LAZY_QUOTE_PREFIX);
+        out.push(FORCED_PARAGRAPH_PREFIX);
+        out.push_str(rest);
+        return out;
+    }
+
     let mut out = String::with_capacity(line.len() + FORCED_PARAGRAPH_PREFIX.len_utf8());
     out.push(FORCED_PARAGRAPH_PREFIX);
     out.push_str(line);
@@ -2791,7 +2800,11 @@ fn strip_forced_paragraph_prefix(line: &str) -> &str {
 }
 
 fn strip_lazy_prefix(line: &str) -> &str {
-    line.strip_prefix(LAZY_QUOTE_PREFIX).unwrap_or(line)
+    if let Some(rest) = line.strip_prefix(LAZY_QUOTE_PREFIX) {
+        return rest;
+    }
+    let trimmed = line.trim_start_matches([' ', '\t']);
+    trimmed.strip_prefix(LAZY_QUOTE_PREFIX).unwrap_or(line)
 }
 
 fn line_has_list_marker_with_content(line: &str) -> bool {

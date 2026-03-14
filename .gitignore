@@ -4,3 +4,4 @@ node_modules
 npm/*/bin/markrs
 npm/*/bin/markrs.exe
 *.tgz
+bench/results/history.jsonl

@@ -2,9 +2,15 @@ use crate::RenderOptions;
 use crate::markdown::ast::{self, inline::Inline};
 
 static HEADING_OPEN: [&str; 7] = ["", "<h1>", "<h2>", "<h3>", "<h4>", "<h5>", "<h6>"];
-static HEADING_CLOSE: [&str; 7] = ["", "</h1>\n", "</h2>\n", "</h3>\n", "</h4>\n", "</h5>\n", "</h6>\n"];
+static HEADING_CLOSE: [&str; 7] = [
+    "", "</h1>\n", "</h2>\n", "</h3>\n", "</h4>\n", "</h5>\n", "</h6>\n",
+];
 
-pub(crate) fn render_document(doc: &ast::Document, options: RenderOptions, input_len: usize) -> String {
+pub(crate) fn render_document(
+    doc: &ast::Document,
+    options: RenderOptions,
+    input_len: usize,
+) -> String {
     let mut out = String::with_capacity(input_len + input_len / 2);
     render_document_into(doc, options, &mut out);
     out
@@ -22,15 +28,15 @@ pub(crate) fn render_document_into(doc: &ast::Document, options: RenderOptions, 
 
 fn render_block(block: &ast::Block, out: &mut String, options: RenderOptions) {
     match block {
-        ast::Block::Paragraph { inlines } => {
+        ast::Block::Paragraph { source, inlines } => {
             out.push_str("<p>");
-            render_inlines(inlines, out, options);
+            render_inlines(inlines, out, options, source);
             out.push_str("</p>\n");
         }
         ast::Block::Heading { level, inlines } => {
             let l = *level as usize;
             out.push_str(HEADING_OPEN[l]);
-            render_inlines(inlines, out, options);
+            render_inlines(inlines, out, options, "");
             out.push_str(HEADING_CLOSE[l]);
         }
         ast::Block::List {
@@ -60,13 +66,13 @@ fn render_block(block: &ast::Block, out: &mut String, options: RenderOptions) {
 
                 let mut rendered_task_paragraph = false;
                 if let Some(done) = item.task {
-                    if let Some(ast::Block::Paragraph { inlines }) = children.first() {
+                    if let Some(ast::Block::Paragraph { source, inlines }) = children.first() {
                         out.push_str("<p>");
                         render_task_checkbox(done, out);
                         if !inlines.is_empty() {
                             out.push(' ');
                         }
-                        render_inlines(inlines, out, options);
+                        render_inlines(inlines, out, options, source);
                         out.push_str("</p>\n");
                         rendered_task_paragraph = true;
                     } else if let Some(ast::Block::HtmlBlock(raw)) = children.first() {
@@ -134,7 +140,7 @@ fn render_block(block: &ast::Block, out: &mut String, options: RenderOptions) {
                 out.push_str("<th");
                 render_table_align_attr(aligns.get(idx).copied().flatten(), out);
                 out.push('>');
-                render_inlines(cell, out, options);
+                render_inlines(cell, out, options, "");
                 out.push_str("</th>");
             }
             out.push_str("</tr></thead>");
@@ -146,7 +152,7 @@ fn render_block(block: &ast::Block, out: &mut String, options: RenderOptions) {
                         out.push_str("<td");
                         render_table_align_attr(aligns.get(idx).copied().flatten(), out);
                         out.push('>');
-                        render_inlines(cell, out, options);
+                        render_inlines(cell, out, options, "");
                         out.push_str("</td>");
                     }
                     out.push_str("</tr>");
@@ -182,7 +188,7 @@ fn render_tight_list_item(
         }
 
         match child {
-            ast::Block::Paragraph { inlines } => {
+            ast::Block::Paragraph { source, inlines } => {
                 if idx == 0 {
                     if let Some(done) = task {
                         render_task_checkbox(done, out);
@@ -191,7 +197,7 @@ fn render_tight_list_item(
                         }
                     }
                 }
-                render_inlines(inlines, out, options);
+                render_inlines(inlines, out, options, source);
             }
             _ => render_block(child, out, options),
         }
@@ -213,11 +219,22 @@ fn render_tight_list_separator(
     }
 }
 
-fn render_inlines(inlines: &[Inline], out: &mut String, options: RenderOptions) {
+fn render_inlines(inlines: &[Inline], out: &mut String, options: RenderOptions, source: &str) {
+    if let [Inline::Text(text)] = inlines {
+        escape_html_to(text, out);
+        return;
+    }
+    if let [Inline::TextSpan(span)] = inlines {
+        escape_html_to(span.as_str(source), out);
+        return;
+    }
+
     for inline in inlines {
         match inline {
             Inline::Text(text) => escape_html_to(text, out),
+            Inline::TextSpan(span) => escape_html_to(span.as_str(source), out),
             Inline::RawHtml(html) => render_raw_html(html, out, options),
+            Inline::RawHtmlSpan(span) => render_raw_html(span.as_str(source), out, options),
             Inline::SoftBreak => {
                 if options.breaks {
                     out.push_str("<br>\n");
@@ -231,19 +248,24 @@ fn render_inlines(inlines: &[Inline], out: &mut String, options: RenderOptions) 
                 escape_html_to(text, out);
                 out.push_str("</code>");
             }
+            Inline::CodeSpan(span) => {
+                out.push_str("<code>");
+                escape_normalized_code_span_to(span.as_str(source), out);
+                out.push_str("</code>");
+            }
             Inline::Em(children) => {
                 out.push_str("<em>");
-                render_inlines(children, out, options);
+                render_inlines(children, out, options, source);
                 out.push_str("</em>");
             }
             Inline::Strong(children) => {
                 out.push_str("<strong>");
-                render_inlines(children, out, options);
+                render_inlines(children, out, options, source);
                 out.push_str("</strong>");
             }
             Inline::Del(children) => {
                 out.push_str("<del>");
-                render_inlines(children, out, options);
+                render_inlines(children, out, options, source);
                 out.push_str("</del>");
             }
             Inline::Link { label, href, title } => {
@@ -256,15 +278,14 @@ fn render_inlines(inlines: &[Inline], out: &mut String, options: RenderOptions) 
                     out.push('"');
                 }
                 out.push('>');
-                render_inlines(label, out, options);
+                render_inlines(label, out, options, source);
                 out.push_str("</a>");
             }
             Inline::Image { alt, src, title } => {
                 out.push_str("<img src=\"");
                 escape_html_attr_to(src, out);
                 out.push_str("\" alt=\"");
-                let alt_text = inline_text_content(alt);
-                escape_html_attr_to(&alt_text, out);
+                render_inline_text_content_escaped(alt, out, source);
                 out.push('"');
                 if let Some(title) = title {
                     out.push_str(" title=\"");
@@ -292,6 +313,15 @@ pub(crate) fn escape_html_to_pub(text: &str, out: &mut String) {
 
 #[inline]
 fn escape_html_to(text: &str, out: &mut String) {
+    if !text
+        .as_bytes()
+        .iter()
+        .any(|&b| matches!(b, b'&' | b'<' | b'>' | b'"'))
+    {
+        out.push_str(text);
+        return;
+    }
+
     let bytes = text.as_bytes();
     let mut start = 0;
     for (i, &b) in bytes.iter().enumerate() {
@@ -340,6 +370,11 @@ fn escape_html_attr_to(text: &str, out: &mut String) {
 }
 
 fn escape_href_attr_to(text: &str, out: &mut String) {
+    if !text.as_bytes().iter().any(|&b| matches!(b, b'&' | b'"')) {
+        out.push_str(text);
+        return;
+    }
+
     let bytes = text.as_bytes();
     let mut start = 0;
     for (i, &b) in bytes.iter().enumerate() {
@@ -364,22 +399,66 @@ fn render_table_align_attr(align: Option<ast::TableAlignment>, out: &mut String)
     }
 }
 
-fn inline_text_content(inlines: &[Inline]) -> String {
-    let mut out = String::new();
-    inline_text_content_to(inlines, &mut out);
-    out
-}
-
-fn inline_text_content_to(inlines: &[Inline], out: &mut String) {
+fn render_inline_text_content_escaped(inlines: &[Inline], out: &mut String, source: &str) {
     for inline in inlines {
         match inline {
-            Inline::Text(text) | Inline::Code(text) | Inline::RawHtml(text) => out.push_str(text),
+            Inline::Text(text) | Inline::Code(text) | Inline::RawHtml(text) => {
+                escape_html_attr_to(text, out)
+            }
+            Inline::TextSpan(span) | Inline::RawHtmlSpan(span) => {
+                escape_html_attr_to(span.as_str(source), out)
+            }
+            Inline::CodeSpan(span) => escape_normalized_code_span_to(span.as_str(source), out),
             Inline::SoftBreak | Inline::HardBreak => out.push(' '),
             Inline::Em(children) | Inline::Strong(children) | Inline::Del(children) => {
-                inline_text_content_to(children, out);
+                render_inline_text_content_escaped(children, out, source);
             }
-            Inline::Link { label, .. } => inline_text_content_to(label, out),
-            Inline::Image { alt, .. } => inline_text_content_to(alt, out),
+            Inline::Link { label, .. } => render_inline_text_content_escaped(label, out, source),
+            Inline::Image { alt, .. } => render_inline_text_content_escaped(alt, out, source),
+        }
+    }
+}
+
+fn escape_normalized_code_span_to(raw: &str, out: &mut String) {
+    if raw.is_empty() {
+        return;
+    }
+
+    if !raw.contains('\n') {
+        let trimmed = if raw.len() > 1 && raw.starts_with(' ') && raw.ends_with(' ') {
+            &raw[1..raw.len() - 1]
+        } else {
+            raw
+        };
+        escape_html_to(trimmed, out);
+        return;
+    }
+
+    let bytes = raw.as_bytes();
+    let mut start = 0usize;
+    let mut end = bytes.len();
+
+    if end > 1 {
+        let first = if bytes[0] == b'\n' { b' ' } else { bytes[0] };
+        let last = if bytes[end - 1] == b'\n' {
+            b' '
+        } else {
+            bytes[end - 1]
+        };
+        if first == b' ' && last == b' ' {
+            start = 1;
+            end -= 1;
+        }
+    }
+
+    for &b in &bytes[start..end] {
+        let b = if b == b'\n' { b' ' } else { b };
+        match b {
+            b'&' => out.push_str("&amp;"),
+            b'<' => out.push_str("&lt;"),
+            b'>' => out.push_str("&gt;"),
+            b'"' => out.push_str("&quot;"),
+            _ => out.push(b as char),
         }
     }
 }
@@ -428,7 +507,11 @@ fn is_disallowed_raw_html_tag(tag: &str) -> bool {
         start += 1;
     }
     let mut end = start;
-    while end < bytes.len() && !bytes[end].is_ascii_whitespace() && bytes[end] != b'/' && bytes[end] != b'>' {
+    while end < bytes.len()
+        && !bytes[end].is_ascii_whitespace()
+        && bytes[end] != b'/'
+        && bytes[end] != b'>'
+    {
         end += 1;
     }
     if end == start {
@@ -453,6 +536,7 @@ mod tests {
     #[test]
     fn renders_image_title_without_duplication() {
         let node = ast::Block::Paragraph {
+            source: String::new(),
             inlines: vec![ast::inline::Inline::Image {
                 alt: vec![ast::inline::Inline::Text("logo".to_string())],
                 src: "logo.png".to_string(),
@@ -476,6 +560,7 @@ mod tests {
             tight: true,
             items: vec![ast::ListItem {
                 children: vec![ast::Block::Paragraph {
+                    source: String::new(),
                     inlines: vec![ast::inline::Inline::Text("two".to_string())],
                 }],
                 task: None,
@@ -496,6 +581,7 @@ mod tests {
             items: vec![ast::ListItem {
                 children: vec![
                     ast::Block::Paragraph {
+                        source: String::new(),
                         inlines: vec![ast::inline::Inline::Text("list".to_string())],
                     },
                     ast::Block::Heading {

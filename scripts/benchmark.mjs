@@ -12,8 +12,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const resultsDir = path.join(repoRoot, 'bench', 'results');
 const resultJsonPath = path.join(resultsDir, 'latest.json');
+const historyJsonlPath = path.join(resultsDir, 'history.jsonl');
 const readmePath = path.join(repoRoot, 'README.md');
 const writeReadme = process.argv.includes('--write-readme');
+const noHistory = process.argv.includes('--no-history');
+const suiteFilterArg = valueArg('--suite');
+const engineFilterArg = valueArg('--engine');
+const rustOnly = process.argv.includes('--rust-only');
+const jsOnly = process.argv.includes('--js-only');
+
+const warmupRunsOverride = parsePositiveInt(process.env.BENCH_WARMUP_RUNS);
+const measureRunsOverride = parsePositiveInt(process.env.BENCH_MEASURE_RUNS);
 
 const SUITES = [
   {
@@ -53,6 +62,24 @@ const SUITES = [
     loadDocs: () => collectComparableCorpusDocs(),
   },
 ];
+
+function valueArg(flag) {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) return null;
+  if (idx + 1 >= process.argv.length) {
+    throw new Error(`Missing value after ${flag}`);
+  }
+  return process.argv[idx + 1];
+}
+
+function parsePositiveInt(raw) {
+  if (!raw) return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) {
+    throw new Error(`Expected positive integer, got ${raw}`);
+  }
+  return value;
+}
 
 function shell(cmd, args, options = {}) {
   const output = execFileSync(cmd, args, {
@@ -121,15 +148,26 @@ function collectComparableCorpusDocs() {
 }
 
 function buildSuites() {
-  return SUITES.map((suite) => {
+  const suiteFilter = suiteFilterArg
+    ? new Set(suiteFilterArg.split(',').map((id) => id.trim()).filter(Boolean))
+    : null;
+  const selectedSuites = suiteFilter
+    ? SUITES.filter((suite) => suiteFilter.has(suite.id))
+    : SUITES;
+
+  if (suiteFilter && selectedSuites.length === 0) {
+    throw new Error(`No suites matched --suite ${suiteFilterArg}`);
+  }
+
+  return selectedSuites.map((suite) => {
     const docs = suite.loadDocs();
     const inputBytes = docs.reduce((sum, doc) => sum + Buffer.byteLength(doc), 0);
     return {
       id: suite.id,
       label: suite.label,
       source: suite.source,
-      warmupRuns: suite.warmupRuns,
-      measureRuns: suite.measureRuns,
+      warmupRuns: warmupRunsOverride ?? suite.warmupRuns,
+      measureRuns: measureRunsOverride ?? suite.measureRuns,
       docs,
       docsCount: docs.length,
       inputBytes,
@@ -287,6 +325,21 @@ function runRustEngine(engineId, suites) {
   };
 }
 
+function shouldRunEngine(engineId) {
+  if (engineFilterArg) {
+    return engineFilterArg
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .includes(engineId);
+  }
+
+  const isRust = engineId === 'markrs' || engineId === 'pulldown-cmark';
+  if (rustOnly) return isRust;
+  if (jsOnly) return !isRust;
+  return true;
+}
+
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
@@ -318,12 +371,16 @@ function renderMarkdownReport(report) {
   lines.push('| Suite | Engine | Trimmed mean ms | Median ms | Docs/s | MiB/s | vs marked |');
   lines.push('| --- | --- | ---: | ---: | ---: | ---: | ---: |');
 
-  const engineOrder = ['markrs', 'pulldown-cmark', 'marked', 'markdown-it', 'remark'];
+  const enginesPresent = new Set(report.engines.map((engine) => engine.engine));
+  const engineOrder = ['markrs', 'pulldown-cmark', 'marked', 'markdown-it', 'remark'].filter((engineId) => enginesPresent.has(engineId));
   for (const suite of report.suites) {
     const byEngine = new Map(report.engines.map((engine) => [engine.engine, engine.suites.find((entry) => entry.id === suite.id)]));
     const marked = byEngine.get('marked');
     for (const engineId of engineOrder) {
       const row = byEngine.get(engineId);
+      if (!row) {
+        continue;
+      }
       const label = engineId === 'markrs'
         ? 'markrs (Rust)'
         : engineId === 'pulldown-cmark'
@@ -335,7 +392,7 @@ function renderMarkdownReport(report) {
               : 'remark + gfm + html';
       const comparisonMs = row.trimmedMeanMs ?? row.meanMs;
       const markedComparisonMs = marked?.trimmedMeanMs ?? marked?.meanMs;
-      const speedup = markedComparisonMs ? formatSpeedup(markedComparisonMs, comparisonMs) : '1.00x';
+      const speedup = markedComparisonMs ? formatSpeedup(markedComparisonMs, comparisonMs) : '-';
       lines.push(`| ${suite.label} | ${label} | ${formatMs(comparisonMs)} | ${formatMs(row.medianMs)} | ${row.docsPerSec.toFixed(1)} | ${row.mibPerSec.toFixed(2)} | ${speedup} |`);
     }
   }
@@ -365,15 +422,66 @@ function collectEnvironment() {
   };
 }
 
+function collectGitInfo() {
+  try {
+    const commit = shell('git', ['rev-parse', 'HEAD']);
+    const branch = shell('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const describe = shell('git', ['describe', '--tags', '--always', '--dirty']);
+    const porcelain = shell('git', ['status', '--porcelain']);
+    const dirtyFiles = porcelain ? porcelain.split('\n').filter(Boolean).length : 0;
+    return {
+      commit,
+      branch,
+      describe,
+      dirty: dirtyFiles > 0,
+      dirtyFiles,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function collectInvocationInfo() {
+  return {
+    argv: process.argv.slice(2),
+    filters: {
+      suite: suiteFilterArg,
+      engine: engineFilterArg,
+      rustOnly,
+      jsOnly,
+      writeReadme,
+    },
+    overrides: {
+      warmupRuns: warmupRunsOverride,
+      measureRuns: measureRunsOverride,
+    },
+    env: {
+      BENCH_WARMUP_RUNS: process.env.BENCH_WARMUP_RUNS ?? null,
+      BENCH_MEASURE_RUNS: process.env.BENCH_MEASURE_RUNS ?? null,
+      CI: process.env.CI ?? null,
+    },
+  };
+}
+
+function appendHistoryEntry(entry) {
+  fs.mkdirSync(resultsDir, { recursive: true });
+  fs.appendFileSync(historyJsonlPath, `${JSON.stringify(entry)}\n`, 'utf8');
+}
+
 async function main() {
+  if (rustOnly && jsOnly) {
+    throw new Error('Cannot combine --rust-only and --js-only');
+  }
+
+  if (writeReadme && (suiteFilterArg || engineFilterArg || rustOnly || jsOnly)) {
+    throw new Error('Refusing --write-readme with suite/engine filters');
+  }
+
   fs.mkdirSync(resultsDir, { recursive: true });
   const suites = buildSuites();
 
-  const markedModule = await import('marked');
-  const markdownItModule = await import('markdown-it');
-  const remarkModule = await import('remark');
-  const remarkGfmModule = await import('remark-gfm');
-  const remarkHtmlModule = await import('remark-html');
+  const hasJsEngines =
+    shouldRunEngine('marked') || shouldRunEngine('markdown-it') || shouldRunEngine('remark');
 
   const report = {
     generatedAt: new Date().toISOString(),
@@ -401,15 +509,46 @@ async function main() {
     engines: [],
   };
 
-  report.engines.push(runRustEngine('markrs', suites));
-  report.engines.push(runRustEngine('pulldown-cmark', suites));
-  report.engines.push(runJsEngine('marked', createMarkedRenderer(markedModule), suites));
-  report.engines.push(runJsEngine('markdown-it', createMarkdownItRenderer(markdownItModule), suites));
-  report.engines.push(
-    runJsEngine('remark', createRemarkRenderer(remarkModule, remarkGfmModule, remarkHtmlModule), suites),
-  );
+  if (shouldRunEngine('markrs')) {
+    report.engines.push(runRustEngine('markrs', suites));
+  }
+  if (shouldRunEngine('pulldown-cmark')) {
+    report.engines.push(runRustEngine('pulldown-cmark', suites));
+  }
+
+  if (hasJsEngines) {
+    const markedModule = await import('marked');
+    const markdownItModule = await import('markdown-it');
+    const remarkModule = await import('remark');
+    const remarkGfmModule = await import('remark-gfm');
+    const remarkHtmlModule = await import('remark-html');
+
+    if (shouldRunEngine('marked')) {
+      report.engines.push(runJsEngine('marked', createMarkedRenderer(markedModule), suites));
+    }
+    if (shouldRunEngine('markdown-it')) {
+      report.engines.push(runJsEngine('markdown-it', createMarkdownItRenderer(markdownItModule), suites));
+    }
+    if (shouldRunEngine('remark')) {
+      report.engines.push(
+        runJsEngine('remark', createRemarkRenderer(remarkModule, remarkGfmModule, remarkHtmlModule), suites),
+      );
+    }
+  }
+
+  if (report.engines.length === 0) {
+    throw new Error('No engines selected');
+  }
 
   fs.writeFileSync(resultJsonPath, JSON.stringify(report, null, 2));
+  if (!noHistory) {
+    appendHistoryEntry({
+      historySchema: 1,
+      git: collectGitInfo(),
+      invocation: collectInvocationInfo(),
+      ...report,
+    });
+  }
   const markdown = renderMarkdownReport(report);
   console.log(markdown);
   if (writeReadme) {

@@ -245,7 +245,10 @@ fn parser_blocks_treat_tab_after_blockquote_marker_as_marker_padding() {
 fn parser_blocks_strip_tab_padding_after_blockquote_marker_for_code_blocks() {
     let html = render_markdown_to_html(">\t\tfoo\n", RenderOptions::default());
 
-    assert_eq!(html, "<blockquote><pre><code>foo\n</code></pre>\n</blockquote>\n");
+    assert_eq!(
+        html,
+        "<blockquote><pre><code>foo\n</code></pre>\n</blockquote>\n"
+    );
 }
 
 #[test]
@@ -310,7 +313,10 @@ fn parser_blocks_preserve_continuation_indent_in_paragraph_lines() {
     let md = "aaa\n             bbb\n                                       ccc\n";
     let html = render_markdown_to_html(md, RenderOptions::default());
 
-    assert_eq!(html, "<p>aaa\n             bbb\n                                       ccc</p>\n");
+    assert_eq!(
+        html,
+        "<p>aaa\n             bbb\n                                       ccc</p>\n"
+    );
 }
 
 #[test]
@@ -516,7 +522,8 @@ fn parser_blocks_stop_table_before_following_fences_with_runtime_code_newline() 
 #[test]
 fn parser_blocks_preserve_indented_code_spacing_after_tables() {
     let with_pipes = "| abc | def |\n| --- | --- |\n| bar | foo |\n| baz | boo |\n    a simple\n      *indented* code block\n";
-    let no_pipes = "abc | def\n--- | ---\nbar | foo\nbaz | boo\n    a simple\n      *indented* code block\n";
+    let no_pipes =
+        "abc | def\n--- | ---\nbar | foo\nbaz | boo\n    a simple\n      *indented* code block\n";
 
     let html_with_pipes = render_markdown_to_html(with_pipes, RenderOptions::default());
     let html_no_pipes = render_markdown_to_html(no_pipes, RenderOptions::default());
