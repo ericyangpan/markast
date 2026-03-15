@@ -1,52 +1,70 @@
 # markast Requirements
 
-Last updated: 2026-03-12
+Last updated: 2026-03-15
 
 ## Product Direction
 
 `markast` is an HTML-output Markdown renderer that targets compatibility with `marked` while adding project-specific styling features.
 
+## Current Status
+
+The parser cutover portion of P0 is complete:
+
+- `render_markdown_to_html` uses the in-house Rust parser
+- `Cargo.toml` no longer depends on `pulldown-cmark`
+- the remaining P0 work is compatibility reduction, benchmark discipline, and release hardening
+
+Current checked-in baselines:
+
+- snapshot compatibility: `1404 / 1485` passed, `81` tracked gaps
+- runtime compatibility: `1402 / 1485` passed, `83` tracked gaps
+
 ## Priority Roadmap
 
 ### P0 (Primary Mission)
 
-- Replace `pulldown-cmark` with an in-house parser implementation.
-- Build the parser from scratch in Rust and make it the default parsing core.
-- Keep passing:
-  - markast own test suite
-  - marked snapshot compatibility suite (with shrinking `tests/compat/xfail.yaml`)
-  - current marked runtime compatibility suite (with shrinking `tests/compat/runtime_xfail.yaml`)
+- Keep hardening the in-house Rust parser until compatibility gaps are small and well-understood.
+- Prioritize current-runtime parity first, while keeping vendored snapshot gaps on a downward trend.
+- Preserve benchmark guardrails while reducing compatibility gaps.
 
 Acceptance criteria:
 
-- `Cargo.toml` no longer depends on `pulldown-cmark`.
-- The new Rust parser is used by `render_markdown_to_html`.
-- `npm run test:own` and `npm run test:compat` pass in CI.
-- `npm run test:compat` aggregates both `test:compat:snapshot` and `test:compat:runtime`.
+- `npm run check:strict`, `npm run test:own`, and `npm run test:compat` pass in CI.
+- `tests/compat/runtime_xfail.yaml` and `tests/compat/xfail.yaml` continue to shrink or are intentionally justified.
 - Isolated benchmark runs keep `Comparable Corpus` at `1.25x` or better vs `marked`, with `Marked Fixtures` at or above parity.
+- Remaining gaps, if any, are explicitly categorized rather than left as unexplained baseline noise.
+
+Near-term execution order:
+
+1. Reduce runtime mismatches in `tests/compat/runtime_xfail.yaml`.
+2. Fold in the same fixes to snapshot coverage where they also recover vendored fixtures.
+3. Revisit snapshot-only deltas once runtime parity work stops producing efficient wins.
+4. Resolve the remaining Windows npm package publish block when release work resumes.
+
+Primary working docs:
+
+- `docs/p0-parser-plan.md`
+- `docs/p0-parser-design.md`
+- `docs/testing-and-compat.md`
+- `docs/performance.md`
+
+Packaging follow-up:
+
+- `docs/rename-to-markast.md`
+
+What counts as "next work" right now:
+
+- CommonMark / GFM runtime mismatches
+- Remaining fixture tails around HTML, autolinks, entity handling, and list structure
+- The npm registry block on `markast-win32-x64-msvc`
 
 Default aggressive execution target:
 
-- Drive current-runtime compatibility to parity by reducing `tests/compat/runtime_xfail.yaml` from the current `83` gaps to `0`.
-- Keep `tests/compat/xfail.yaml` on a downward trend from the current `81` gaps, but do not trade away runtime parity just to satisfy stale vendored snapshots.
-- Preserve benchmark guardrails while reducing compatibility gaps:
+- drive `tests/compat/runtime_xfail.yaml` from `83` toward `0`
+- keep `tests/compat/xfail.yaml` trending downward from `81` without regressing runtime behavior
+- preserve benchmark guardrails:
   - `Comparable Corpus >= 1.25x` vs `marked`
   - `Marked Fixtures >= 1.00x` vs `marked`
-
-Autonomous mode:
-
-- Agents may continue through repeated parser/renderer reduction batches without waiting for user confirmation after each batch.
-- Each batch is expected to include the code change, focused regression coverage, validation, any intentional xfail delta, and a commit.
-- Stop and escalate only when:
-  - a fix requires changing the public API, CLI behavior, packaging contract, or documented default semantics
-  - a fix requires editing `third_party/marked/*` or changing the vendored/current `marked` target version
-  - runtime parity and snapshot parity require conflicting behavior that the current harness cannot represent cleanly
-  - three consecutive well-scoped batches fail to reduce the runtime gap
-  - a correctness fix would push isolated benchmark results below the guardrail floor
-
-Implementation plan:
-
-- `docs/p0-parser-plan.md`
 
 ### P1 (Security Mode)
 

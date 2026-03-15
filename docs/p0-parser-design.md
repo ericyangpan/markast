@@ -1,15 +1,16 @@
 # P0 Parser Detailed Design
 
-Last updated: 2026-03-05
+Last updated: 2026-03-15
 
 ## 1. Objective
 
-Implement a from-scratch Rust Markdown parser for `markast` without changing the public rendering contract.
+Keep evolving the in-house Rust Markdown parser for `markast` without changing the public rendering contract.
 
 Public contract to preserve:
 
 - `render_markdown_to_html(input: &str, options: RenderOptions) -> String`
-- `RenderOptions { gfm, breaks }` semantics
+- `render_markdown_to_html_buf(input: &str, options: RenderOptions, buf: &mut String)`
+- `RenderOptions { gfm, breaks, pedantic }` semantics
 - Existing own tests and marked compatibility tests remain the release gate
 
 ## 2. Non-goals (P0)
@@ -20,9 +21,9 @@ Public contract to preserve:
 
 ## 3. Current Baseline
 
-- Engine now: in-house `markdown` parser modules (`src/markdown/*`) + post-process hooks
+- Engine now: in-house `markdown` parser modules (`src/markdown/*`)
 - Marked compatibility test harness already in place
-- `xfail` baseline exists and is intentionally mutable during migration
+- `xfail` baselines exist and are intentionally mutable only when behavior changes are verified
 
 Baseline freeze rule:
 
@@ -37,19 +38,18 @@ Code layout target:
 
 - `src/markdown/mod.rs`
 - `src/markdown/options.rs`
-- `src/markdown/source.rs`
-- `src/markdown/token.rs`
+- `src/markdown/span.rs`
 - `src/markdown/ast.rs`
 - `src/markdown/lexer.rs`
 - `src/markdown/block.rs`
 - `src/markdown/inline.rs`
+- `src/markdown/render.rs`
 - `src/markdown/render_html.rs`
-- `src/markdown/autolink.rs`
 - `src/markdown/tests/*` (unit-level parser tests)
 
 Integration boundary:
 
-- `src/lib.rs` calls `markdown::render_html(input, options)`
+- `src/lib.rs` calls `markdown::render_markdown_to_html(input, options)`
 - CLI stays unchanged
 
 ## 5. Data Model
@@ -60,6 +60,7 @@ Purpose:
 
 - Accurate debug output
 - Easier compat diff localization
+- Shared parser bookkeeping without exposing spans publicly
 
 Suggested structure:
 
@@ -70,6 +71,8 @@ pub struct Span {
     pub end: usize,
 }
 ```
+
+Spans now live in `src/markdown/span.rs`.
 
 ### 5.2 Block AST
 
@@ -111,9 +114,6 @@ Pipeline stages:
 3. Collect and resolve link reference definitions
 4. Inline parse paragraph/heading/list-item inline text
 5. Render HTML
-6. Post-process hooks:
-   - `breaks` soft-break conversion
-   - GFM plain URL/email autolink pass
 
 ## 7. Block Parser Design
 
@@ -178,8 +178,8 @@ Evaluation order per candidate line:
 - Keep current markast policy:
   - plain `www.` auto-link in GFM mode
   - plain emails auto-link in GFM mode
-  - skip inside `a/code/pre/script/style/textarea`
-- Keep this behavior in dedicated `autolink.rs` pass so parser core remains deterministic
+  - skip inside tags that should not be rewritten
+- Keep this behavior isolated from the block parser so parser core remains deterministic
 
 ## 9. HTML Renderer Design
 
@@ -207,8 +207,8 @@ Use current harness unchanged as external oracle.
 
 Additional guidance:
 
-- Keep front-matter option extraction in tests (`gfm`, `breaks`)
-- Keep `xfail` but classify each mismatch category:
+- Keep front-matter option extraction in tests (`gfm`, `breaks`, `pedantic`)
+- Keep `xfail`, but classify each mismatch category:
   - block structure mismatch
   - inline delimiter mismatch
   - link/ref resolution mismatch
@@ -216,39 +216,39 @@ Additional guidance:
 
 Reduction strategy:
 
-1. Remove formatting-only mismatches first
-2. Then block structure mismatches
-3. Then inline/link edge cases
+1. Remove high-yield runtime mismatches first
+2. Recover snapshot gaps that fall out of the same fixes
+3. Leave purely historical snapshot deltas for dedicated cleanup passes
 
 ## 11. Cutover Status
 
-During migration, the codebase is expected to converge on the new in-house parser as
-the default and only active rendering path.
+The in-house parser is already the default and only active rendering path.
 
-`markast` legacy routing has been removed from `src/markdown/mod.rs`.
-Rendering now goes through the new parser pipeline directly:
-`render_html::render_markdown_to_html`.
+Rendering goes through:
+
+- `markdown::render_markdown_to_html`
+- `markdown::render_markdown_to_html_buf`
 
 ## 12. Performance Plan
 
-Measure before and after M3 and M5.
+Measure before and after large parser batches.
 
 Benchmark sets:
 
 - Small docs: README-scale
 - Medium docs: 10-50 KB markdown
 - Large docs: 100-500 KB markdown
-- Pathological fixtures from `third_party/marked/test/specs/redos`
+- Shared corpora from `third_party/marked/test/specs`
 
 Metrics:
 
-- Throughput (MB/s)
-- p50/p95 parse time
-- peak memory
+- Throughput (MiB/s)
+- trimmed-mean and median render time
+- compatibility-preserving performance changes only
 
 Guardrail:
 
-- No >30% regression vs baseline without explicit sign-off
+- No drop below the benchmark thresholds documented in `docs/performance.md` without explicit sign-off
 
 ## 13. Test Plan
 
@@ -256,8 +256,9 @@ Guardrail:
 
 - `tests/own_rendering.rs`
 - `tests/compat_snapshot.rs`
+- `tests/compat_runtime.rs`
 
-### 13.2 New parser-focused tests
+### 13.2 Parser-focused tests
 
 - `tests/parser_blocks.rs`
 - `tests/parser_inlines.rs`
@@ -273,111 +274,3 @@ Coverage map (minimum):
 - Emphasis/strong/strike combinations
 - Links/images/reference links
 - Escapes/entities/backticks edge cases
-
-## 14. Milestone Execution Detail
-
-### M0
-
-- Freeze baseline counts and categories
-- Add a script to print mismatch category summary
-
-### M1
-
-- Create parser modules and compile path
-- Implement minimal block parser + renderer
-- Add engine switch and smoke tests
-
-### M2
-
-- Complete block constructs
-- Land block-focused parser tests
-
-### M3
-
-- Complete inline parser and link resolution
-- Land inline-focused parser tests
-
-### M4
-
-- Drive down `xfail` with fixture-led iterations
-- Prioritize top-frequency mismatch categories
-
-### M5
-
-- Delete `pulldown-cmark` usage and dependency
-- Remove temporary engine switch
-- Finalize docs
-
-## 15. Task Backlog (Ready for fast model)
-
-### B1: Scaffolding
-
-- Create module tree under `src/markdown`
-- Add `RenderOptions` passthrough
-
-### B2: AST + Renderer core
-
-- Add AST enums/structs
-- Add HTML rendering primitives with escaping
-
-### B3: Block parser iteration
-
-- Add cursor/container stack
-- Implement heading/paragraph/hr/fenced code
-- Add list/blockquote/table
-
-### B4: Inline parser iteration
-
-- Add tokenizer
-- Add delimiter stack resolver
-- Add link/image/reference resolver
-
-### B5: Compatibility reduction loops
-
-- Run compat
-- Fix top category
-- Re-run
-
-### B6: Cutover cleanup
-
-- Remove pulldown dependency
-- Remove fallback path
-- Refresh docs
-
-## 16. Risks and Mitigations
-
-Risk:
-
-- List and table edge cases consume most effort
-
-Mitigation:
-
-- Build explicit precedence matrix tests first
-
-Risk:
-
-- Inline delimiter logic causes regressions
-
-Mitigation:
-
-- Keep tokenizer and resolver separated with focused regression tests
-
-Risk:
-
-- Migration causes hard-to-debug diffs
-
-Mitigation:
-
-- Preserve spans and add mismatch debug output keyed by span region
-
-## 17. Decision Log
-
-DL-001:
-
-- Keep autolink and softbreak behavior as explicit post-process passes in P0
-- Reason: reduces parser-core complexity while preserving current markast behavior
-
-DL-002:
-
-- Keep parser AST internal-only in P0
-- Reason: avoid freezing API before compatibility stabilizes

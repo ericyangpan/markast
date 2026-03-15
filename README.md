@@ -69,7 +69,13 @@ npm run build
 Parser engine:
 Current default and only production parser is the in-house `markdown` module (new parser pipeline), with no external markdown engine dependency in the main crate.
 
-Requirements and roadmap: `docs/requirements.md`
+Development docs:
+
+- `docs/README.md`
+- `docs/architecture.md`
+- `docs/testing-and-compat.md`
+- `docs/performance.md`
+- `docs/requirements.md`
 
 Compatibility fixtures are synced under `third_party/marked/test/specs`.
 
@@ -98,7 +104,7 @@ npm run test:compat:runtime:update-xfail
 
 ## Compatibility Report
 
-Current report date: 2026-03-08
+Current report date: 2026-03-15
 
 This table compares the same parser-output cases from the official marked corpus under `third_party/marked/test/specs`.
 
@@ -116,8 +122,8 @@ Excluded from this table:
 | Target | Case source | Passed | Gaps | Pass rate |
 | --- | --- | ---: | ---: | ---: |
 | `marked` self-spec result | vendored `marked` fixture/spec corpus | 1485 | 0 | 100.0% |
-| `markast` snapshot compat | vendored fixture/spec snapshots | 1449 | 36 | 97.6% |
-| `markast` runtime compat | current `marked@17.0.4` runtime | 1353 | 132 | 91.1% |
+| `markast` snapshot compat | vendored fixture/spec snapshots | 1404 | 81 | 94.5% |
+| `markast` runtime compat | current `marked@17.0.4` runtime | 1402 | 83 | 94.4% |
 
 How to refresh:
 - `npm run test:compat`

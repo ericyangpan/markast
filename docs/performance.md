@@ -135,7 +135,7 @@ The current parser is correct enough to benchmark, but still pays visible overhe
 - some paths still rebuild text that was already available as slices
 
 4. Source normalization and line scanning
-- `src/markdown/source.rs`
+- `src/markdown/render_html.rs`
 - `src/markdown/lexer.rs`
 - `src/markdown/parser.rs`
 - the cheap paths are better than before, but there is still room to reduce fixed overhead
@@ -229,7 +229,7 @@ Acceptance:
 
 Target files:
 
-- `src/markdown/source.rs`
+- `src/markdown/render_html.rs`
 - `src/markdown/lexer.rs`
 - `src/markdown/parser.rs`
 

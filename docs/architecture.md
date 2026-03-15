@@ -31,28 +31,35 @@ The repository has three main surfaces:
 Current high-level flow:
 
 1. `src/main.rs` or library callers pass Markdown plus `RenderOptions`
-2. `src/markdown/render_html.rs` calls `parser::parse_document(...)`
-3. `src/markdown/parser.rs` normalizes access to line-based parsing
-4. `src/markdown/block.rs` builds the block-level document tree
+2. `src/markdown/render_html.rs` takes a trivial-paragraph fast path when possible
+3. otherwise `src/markdown/parser.rs` parses the document into the internal AST
+4. `src/markdown/block.rs` builds block structure
 5. `src/markdown/inline.rs` resolves inline syntax inside block content
 6. `src/markdown/render.rs` converts the AST into HTML
-7. `src/markdown/autolink.rs` applies post-render autolink processing
 
-The public API contract is preserved through `render_markdown_to_html(input, options) -> String`.
+The public API contract is preserved through:
+
+- `render_markdown_to_html(input, options) -> String`
+- `render_markdown_to_html_buf(input, options, buf)`
 
 ## Module Map
+
+`src/markdown/mod.rs`
+
+- Internal module boundary used by `src/lib.rs`
+- Re-exports the current parser/render entrypoints inside the crate
 
 `src/markdown/ast.rs`
 
 - Internal document model used by the parser and renderer
 
-`src/markdown/source.rs`
+`src/markdown/span.rs`
 
-- Source abstraction for normalized line access
+- Source span helpers used for parser bookkeeping and renderer decisions
 
 `src/markdown/lexer.rs`
 
-- Low-level line scanning helpers used by parsing
+- Low-level scanning helpers used by parsing
 
 `src/markdown/options.rs`
 
@@ -60,7 +67,7 @@ The public API contract is preserved through `render_markdown_to_html(input, opt
 
 `src/markdown/parser.rs`
 
-- Parser entrypoint and line-scanner orchestration
+- Parser entrypoint that coordinates block parsing and inline resolution
 
 `src/markdown/block.rs`
 
@@ -79,10 +86,7 @@ The public API contract is preserved through `render_markdown_to_html(input, opt
 `src/markdown/render_html.rs`
 
 - Top-level render coordinator
-
-`src/markdown/autolink.rs`
-
-- GFM-style post-processing for plain URL and email autolinks
+- Contains the trivial single-paragraph fast path
 
 ## Tests by Responsibility
 

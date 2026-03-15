@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+const markedVersion = packageJson.devDependencies?.marked ?? 'unknown';
+const reportDate = new Date().toISOString().slice(0, 10);
 
 function countSpecCases() {
   const specsRoot = path.join(repoRoot, 'third_party', 'marked', 'test', 'specs');
@@ -63,7 +66,7 @@ function buildReport() {
 
   return `## Compatibility Report
 
-Current report date: 2026-03-08
+Current report date: ${reportDate}
 
 This table compares the same parser-output cases from the official marked corpus under \`third_party/marked/test/specs\`.
 
@@ -82,7 +85,7 @@ Excluded from this table:
 | --- | --- | ---: | ---: | ---: |
 | \`marked\` self-spec result | vendored \`marked\` fixture/spec corpus | ${specs.comparableTotal} | 0 | 100.0% |
 | \`markast\` snapshot compat | vendored fixture/spec snapshots | ${snapshotPassed} | ${snapshotXfail} | ${percent(snapshotPassed, specs.comparableTotal)} |
-| \`markast\` runtime compat | current \`marked@17.0.4\` runtime | ${runtimePassed} | ${runtimeXfail} | ${percent(runtimePassed, specs.comparableTotal)} |
+| \`markast\` runtime compat | current \`marked@${markedVersion}\` runtime | ${runtimePassed} | ${runtimeXfail} | ${percent(runtimePassed, specs.comparableTotal)} |
 
 How to refresh:
 - \`npm run test:compat\`
