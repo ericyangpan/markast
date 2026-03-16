@@ -20,11 +20,11 @@ Then read these depending on the workstream:
 
 ## Current Status
 
-As of 2026-03-15, the repository state is:
+As of 2026-03-16, the repository state is:
 
 - the in-house Rust parser is already the default and only production parser
-- snapshot compatibility baseline: `1404 / 1485` passing, `81` tracked gaps
-- current-runtime compatibility baseline: `1402 / 1485` passing, `83` tracked gaps
+- snapshot compatibility baseline: `1327 / 1485` passing, `158` tracked gaps
+- current-runtime compatibility baseline: `1479 / 1485` passing, `6` tracked gaps
 - release/publish follow-up: `markast-win32-x64-msvc@0.1.0` is still blocked by npm spam detection
 
 These numbers come from the checked-in baselines:
@@ -41,16 +41,13 @@ If you are picking up the next meaningful work, use this order:
 3. Keep benchmark guardrails intact while fixing compatibility.
 4. Resolve the external npm Windows package publish blocker when release work resumes.
 
-The current runtime gap is concentrated in CommonMark/GFM examples plus a small tail of fixture mismatches, especially:
+The current runtime gap is now a small fixture tail:
 
 - `new/em_and_reflinks.md`
 - `new/html_comments.md`
-- `new/links_paren.md`
-- `new/list_wrong_indent.md`
-- `original/amps_and_angles_encoding.md`
-- `original/auto_links.md`
 - `original/markdown_documentation_syntax.md`
 - `original/ordered_and_unordered_lists.md`
+- `commonmark` / `gfm-commonmark` example `93`
 
 Use `docs/p0-parser-plan.md` for the execution loop around those clusters.
 

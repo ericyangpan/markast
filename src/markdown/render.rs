@@ -1,5 +1,8 @@
 use crate::RenderOptions;
-use crate::markdown::ast::{self, inline::Inline};
+use crate::markdown::{
+    ast::{self, inline::Inline},
+    block::parse_html_entity,
+};
 
 static HEADING_OPEN: [&str; 7] = ["", "<h1>", "<h2>", "<h3>", "<h4>", "<h5>", "<h6>"];
 static HEADING_CLOSE: [&str; 7] = [
@@ -106,6 +109,9 @@ fn render_block(block: &ast::Block, out: &mut String, options: RenderOptions) {
             for child in children {
                 render_block(child, out, options);
             }
+            if matches!(children.last(), Some(ast::Block::HtmlBlock(_))) && out.ends_with('\n') {
+                out.pop();
+            }
             out.push_str("</blockquote>\n");
         }
         ast::Block::CodeBlock { info, content } => {
@@ -116,15 +122,15 @@ fn render_block(block: &ast::Block, out: &mut String, options: RenderOptions) {
             {
                 if !language.is_empty() {
                     out.push_str("<pre><code class=\"language-");
-                    escape_html_to(&language, out);
+                    escape_html_attr_to(&language, out);
                     out.push_str("\">");
-                    escape_html_to(content, out);
+                    escape_code_html_to(content, out);
                     out.push_str("</code></pre>\n");
                     return;
                 }
             }
             out.push_str("<pre><code>");
-            escape_html_to(content, out);
+            escape_code_html_to(content, out);
             out.push_str("</code></pre>\n");
         }
         ast::Block::ThematicBreak => {
@@ -221,18 +227,18 @@ fn render_tight_list_separator(
 
 fn render_inlines(inlines: &[Inline], out: &mut String, options: RenderOptions, source: &str) {
     if let [Inline::Text(text)] = inlines {
-        escape_html_to(text, out);
+        escape_text_html_to(text, out);
         return;
     }
     if let [Inline::TextSpan(span)] = inlines {
-        escape_html_to(span.as_str(source), out);
+        escape_text_html_to(span.as_str(source), out);
         return;
     }
 
     for inline in inlines {
         match inline {
-            Inline::Text(text) => escape_html_to(text, out),
-            Inline::TextSpan(span) => escape_html_to(span.as_str(source), out),
+            Inline::Text(text) => escape_text_html_to(text, out),
+            Inline::TextSpan(span) => escape_text_html_to(span.as_str(source), out),
             Inline::RawHtml(html) => render_raw_html(html, out, options),
             Inline::RawHtmlSpan(span) => render_raw_html(span.as_str(source), out, options),
             Inline::SoftBreak => {
@@ -245,7 +251,7 @@ fn render_inlines(inlines: &[Inline], out: &mut String, options: RenderOptions, 
             Inline::HardBreak => out.push_str("<br>\n"),
             Inline::Code(text) => {
                 out.push_str("<code>");
-                escape_html_to(text, out);
+                escape_code_html_to(text, out);
                 out.push_str("</code>");
             }
             Inline::CodeSpan(span) => {
@@ -283,7 +289,7 @@ fn render_inlines(inlines: &[Inline], out: &mut String, options: RenderOptions, 
             }
             Inline::Image { alt, src, title } => {
                 out.push_str("<img src=\"");
-                escape_html_attr_to(src, out);
+                escape_href_attr_to(src, out);
                 out.push_str("\" alt=\"");
                 render_inline_text_content_escaped(alt, out, source);
                 out.push('"');
@@ -299,44 +305,23 @@ fn render_inlines(inlines: &[Inline], out: &mut String, options: RenderOptions, 
 }
 
 fn render_raw_html(raw: &str, out: &mut String, options: RenderOptions) {
-    if options.gfm {
-        escape_disallowed_raw_html_to(raw, out);
-        return;
-    }
+    let _ = options;
     out.push_str(raw);
 }
 
 #[inline]
 pub(crate) fn escape_html_to_pub(text: &str, out: &mut String) {
-    escape_html_to(text, out);
+    escape_code_html_to(text, out);
 }
 
 #[inline]
-fn escape_html_to(text: &str, out: &mut String) {
-    if !text
-        .as_bytes()
-        .iter()
-        .any(|&b| matches!(b, b'&' | b'<' | b'>' | b'"'))
-    {
-        out.push_str(text);
-        return;
-    }
+fn escape_code_html_to(text: &str, out: &mut String) {
+    escape_html_without_entities_to(text, out);
+}
 
-    let bytes = text.as_bytes();
-    let mut start = 0;
-    for (i, &b) in bytes.iter().enumerate() {
-        let replacement = match b {
-            b'&' => "&amp;",
-            b'<' => "&lt;",
-            b'>' => "&gt;",
-            b'"' => "&quot;",
-            _ => continue,
-        };
-        out.push_str(&text[start..i]);
-        out.push_str(replacement);
-        start = i + 1;
-    }
-    out.push_str(&text[start..]);
+#[inline]
+fn escape_text_html_to(text: &str, out: &mut String) {
+    escape_html_preserving_entities_to(text, out);
 }
 
 fn extract_code_block_language(info: &str) -> Option<&str> {
@@ -366,11 +351,11 @@ fn unescape_code_block_language(language: &str) -> String {
 }
 
 fn escape_html_attr_to(text: &str, out: &mut String) {
-    escape_html_to(text, out);
+    escape_html_preserving_entities_to(text, out);
 }
 
 fn escape_href_attr_to(text: &str, out: &mut String) {
-    if !text.as_bytes().iter().any(|&b| matches!(b, b'&' | b'"')) {
+    if !text.as_bytes().iter().any(|&b| b == b'"') {
         out.push_str(text);
         return;
     }
@@ -379,8 +364,76 @@ fn escape_href_attr_to(text: &str, out: &mut String) {
     let mut start = 0;
     for (i, &b) in bytes.iter().enumerate() {
         let replacement = match b {
-            b'&' => "&amp;",
             b'"' => "%22",
+            _ => continue,
+        };
+        out.push_str(&text[start..i]);
+        out.push_str(replacement);
+        start = i + 1;
+    }
+    out.push_str(&text[start..]);
+}
+
+fn escape_html_preserving_entities_to(text: &str, out: &mut String) {
+    if !text
+        .as_bytes()
+        .iter()
+        .any(|&b| matches!(b, b'&' | b'<' | b'>' | b'"'))
+    {
+        out.push_str(text);
+        return;
+    }
+
+    let bytes = text.as_bytes();
+    let mut start = 0usize;
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] == b'&' {
+            if let Some(entity_len) = parse_html_entity(&text[i..]) {
+                i += entity_len;
+                continue;
+            }
+        }
+
+        let replacement = match bytes[i] {
+            b'&' => "&amp;",
+            b'<' => "&lt;",
+            b'>' => "&gt;",
+            b'"' => "&quot;",
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+
+        out.push_str(&text[start..i]);
+        out.push_str(replacement);
+        i += 1;
+        start = i;
+    }
+
+    out.push_str(&text[start..]);
+}
+
+fn escape_html_without_entities_to(text: &str, out: &mut String) {
+    if !text
+        .as_bytes()
+        .iter()
+        .any(|&b| matches!(b, b'&' | b'<' | b'>' | b'"'))
+    {
+        out.push_str(text);
+        return;
+    }
+
+    let bytes = text.as_bytes();
+    let mut start = 0usize;
+    for (i, &b) in bytes.iter().enumerate() {
+        let replacement = match b {
+            b'&' => "&amp;",
+            b'<' => "&lt;",
+            b'>' => "&gt;",
+            b'"' => "&quot;",
             _ => continue,
         };
         out.push_str(&text[start..i]);
@@ -430,7 +483,7 @@ fn escape_normalized_code_span_to(raw: &str, out: &mut String) {
         } else {
             raw
         };
-        escape_html_to(trimmed, out);
+        escape_code_html_to(trimmed, out);
         return;
     }
 
@@ -461,72 +514,6 @@ fn escape_normalized_code_span_to(raw: &str, out: &mut String) {
             _ => out.push(b as char),
         }
     }
-}
-
-fn escape_disallowed_raw_html_to(raw: &str, out: &mut String) {
-    let mut i = 0usize;
-
-    while i < raw.len() {
-        let tail = &raw[i..];
-        let Some(offset) = tail.find('<') else {
-            out.push_str(tail);
-            break;
-        };
-        out.push_str(&tail[..offset]);
-        i += offset;
-
-        let Some(tag_end_offset) = raw[i..].find('>') else {
-            out.push_str(&raw[i..]);
-            break;
-        };
-        let tag_end = i + tag_end_offset + 1;
-        let tag = &raw[i..tag_end];
-
-        if is_disallowed_raw_html_tag(tag) {
-            out.push_str("&lt;");
-            out.push_str(&tag[1..]);
-        } else {
-            out.push_str(tag);
-        }
-        i = tag_end;
-    }
-}
-
-fn is_disallowed_raw_html_tag(tag: &str) -> bool {
-    let bytes = tag.as_bytes();
-    if bytes.is_empty() || bytes[0] != b'<' {
-        return false;
-    }
-    let mut start = 1;
-    // skip optional '/'
-    if start < bytes.len() && bytes[start] == b'/' {
-        start += 1;
-    }
-    // skip whitespace
-    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
-        start += 1;
-    }
-    let mut end = start;
-    while end < bytes.len()
-        && !bytes[end].is_ascii_whitespace()
-        && bytes[end] != b'/'
-        && bytes[end] != b'>'
-    {
-        end += 1;
-    }
-    if end == start {
-        return false;
-    }
-    let name = &tag[start..end];
-    name.eq_ignore_ascii_case("title")
-        || name.eq_ignore_ascii_case("textarea")
-        || name.eq_ignore_ascii_case("style")
-        || name.eq_ignore_ascii_case("xmp")
-        || name.eq_ignore_ascii_case("iframe")
-        || name.eq_ignore_ascii_case("noembed")
-        || name.eq_ignore_ascii_case("noframes")
-        || name.eq_ignore_ascii_case("script")
-        || name.eq_ignore_ascii_case("plaintext")
 }
 
 #[cfg(test)]

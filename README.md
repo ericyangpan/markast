@@ -104,7 +104,7 @@ npm run test:compat:runtime:update-xfail
 
 ## Compatibility Report
 
-Current report date: 2026-03-15
+Current report date: 2026-03-16
 
 This table compares the same parser-output cases from the official marked corpus under `third_party/marked/test/specs`.
 
@@ -122,8 +122,8 @@ Excluded from this table:
 | Target | Case source | Passed | Gaps | Pass rate |
 | --- | --- | ---: | ---: | ---: |
 | `marked` self-spec result | vendored `marked` fixture/spec corpus | 1485 | 0 | 100.0% |
-| `markast` snapshot compat | vendored fixture/spec snapshots | 1404 | 81 | 94.5% |
-| `markast` runtime compat | current `marked@17.0.4` runtime | 1402 | 83 | 94.4% |
+| `markast` snapshot compat | vendored fixture/spec snapshots | 1327 | 158 | 89.4% |
+| `markast` runtime compat | current `marked@17.0.4` runtime | 1479 | 6 | 99.6% |
 
 How to refresh:
 - `npm run test:compat`

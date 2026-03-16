@@ -331,11 +331,11 @@ fn parser_blocks_keep_indented_table_like_lines_literal_when_table_parse_fails()
 }
 
 #[test]
-fn parser_blocks_trim_trailing_spaces_from_final_paragraph_line() {
+fn parser_blocks_preserve_trailing_spaces_on_final_paragraph_line() {
     let md = "foo  \n     bar\n\nfoo  \n";
     let html = render_markdown_to_html(md, RenderOptions::default());
 
-    assert_eq!(html, "<p>foo<br>\n     bar</p>\n<p>foo</p>\n");
+    assert_eq!(html, "<p>foo<br>\n     bar</p>\n<p>foo  </p>\n");
 }
 
 #[test]
@@ -415,10 +415,10 @@ fn parser_blocks_support_processing_instruction_and_cdata_html_blocks() {
 }
 
 #[test]
-fn parser_blocks_decode_entities_in_fenced_code_info_string() {
+fn parser_blocks_preserve_entities_in_fenced_code_info_string() {
     let html = render_markdown_to_html("``` f&ouml;&ouml;\nbody\n```\n", RenderOptions::default());
 
-    assert!(html.contains("<code class=\"language-föö\">body\n</code>"));
+    assert!(html.contains("<code class=\"language-f&ouml;&ouml;\">body\n</code>"));
 }
 
 #[test]
@@ -440,7 +440,7 @@ fn parser_blocks_leave_too_long_numeric_entities_literal() {
 }
 
 #[test]
-fn parser_blocks_trim_setext_heading_content_indent_and_trailing_space() {
+fn parser_blocks_preserve_setext_heading_content_spacing_like_current_marked() {
     let md = "  Foo *bar\nbaz*\t\n====\n\nFoo  \n-----\n";
     let html = render_markdown_to_html(
         md,
@@ -450,8 +450,30 @@ fn parser_blocks_trim_setext_heading_content_indent_and_trailing_space() {
         },
     );
 
-    assert!(html.contains("<h1>Foo <em>bar\nbaz</em></h1>"));
-    assert!(html.contains("<h2>Foo</h2>"));
+    assert!(html.contains("<h1>  Foo <em>bar\nbaz</em></h1>"));
+    assert!(html.contains("<h2>Foo  </h2>"));
+}
+
+#[test]
+fn parser_blocks_preserve_space_only_quote_lines_and_lazy_setext_lines() {
+    let md = ">\n> foo\n>  \n\n> foo\nbar\n===\n";
+    let html = render_markdown_to_html(
+        md,
+        RenderOptions {
+            gfm: false,
+            ..RenderOptions::default()
+        },
+    );
+
+    assert!(html.contains("<blockquote><p>foo\n </p>\n</blockquote>"));
+    assert!(html.contains("<blockquote><p>foo\nbar\n===</p>\n</blockquote>"));
+}
+
+#[test]
+fn parser_blocks_render_empty_blockquote_without_empty_paragraph() {
+    let html = render_markdown_to_html(">\n>  \n> \n", RenderOptions::default());
+
+    assert_eq!(html, "<blockquote></blockquote>\n");
 }
 
 #[test]
@@ -813,4 +835,18 @@ fn parser_blocks_keep_parent_lists_tight_when_only_nested_lists_are_loose() {
     assert!(html.contains("<ul><li>a<ul><li><p>b</p>\n<p>c</p>\n</li></ul>\n</li><li>d</li></ul>"));
     assert!(!html.contains("<li><p>a</p>"));
     assert!(!html.contains("<li><p>d</p>"));
+}
+
+#[test]
+fn parser_blocks_preserve_relative_paragraph_indent_inside_list_items() {
+    let md = "- **Header**:  \n  new line\n\n  two space\n one space\nno space\n";
+    let html = render_markdown_to_html(
+        md,
+        RenderOptions {
+            gfm: false,
+            ..RenderOptions::default()
+        },
+    );
+
+    assert!(html.contains("<p>two space\n one space\nno space</p>"));
 }

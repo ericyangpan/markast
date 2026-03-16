@@ -1,6 +1,6 @@
 # P0 Parser Rebuild Plan
 
-Last updated: 2026-03-15
+Last updated: 2026-03-16
 
 ## Goal
 
@@ -36,10 +36,10 @@ Detailed design:
 
 This is the standing work agreement for parser/runtime compatibility work.
 
-Current checked-in baseline (2026-03-15):
+Current checked-in baseline (2026-03-16):
 
-- current-runtime compatibility: `1402` passed, `83` gaps
-- vendored snapshot compatibility: `1404` passed, `81` gaps
+- current-runtime compatibility: `1479` passed, `6` gaps
+- vendored snapshot compatibility: `1327` passed, `158` gaps
 - comparable corpus size: `1485` cases
 - benchmark guardrails:
   - `Comparable Corpus >= 1.25x` vs `marked`
@@ -47,8 +47,8 @@ Current checked-in baseline (2026-03-15):
 
 Default aggressive target:
 
-- reduce `tests/compat/runtime_xfail.yaml` from `83` to `0`
-- keep `tests/compat/xfail.yaml` moving downward from `81`
+- reduce `tests/compat/runtime_xfail.yaml` from `6` to `0`
+- keep `tests/compat/xfail.yaml` intentionally classified while runtime-first work continues
 - preserve the benchmark guardrails above
 
 Current work ordering:
@@ -61,12 +61,9 @@ Current runtime fixture tail to inspect first:
 
 - `new/em_and_reflinks.md`
 - `new/html_comments.md`
-- `new/links_paren.md`
-- `new/list_wrong_indent.md`
-- `original/amps_and_angles_encoding.md`
-- `original/auto_links.md`
 - `original/markdown_documentation_syntax.md`
 - `original/ordered_and_unordered_lists.md`
+- `commonmark` / `gfm-commonmark` example `93`
 
 Default batch loop:
 

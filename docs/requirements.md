@@ -1,6 +1,6 @@
 # markast Requirements
 
-Last updated: 2026-03-15
+Last updated: 2026-03-16
 
 ## Product Direction
 
@@ -16,8 +16,8 @@ The parser cutover portion of P0 is complete:
 
 Current checked-in baselines:
 
-- snapshot compatibility: `1404 / 1485` passed, `81` tracked gaps
-- runtime compatibility: `1402 / 1485` passed, `83` tracked gaps
+- snapshot compatibility: `1327 / 1485` passed, `158` tracked gaps
+- runtime compatibility: `1479 / 1485` passed, `6` tracked gaps
 
 ## Priority Roadmap
 
@@ -60,8 +60,8 @@ What counts as "next work" right now:
 
 Default aggressive execution target:
 
-- drive `tests/compat/runtime_xfail.yaml` from `83` toward `0`
-- keep `tests/compat/xfail.yaml` trending downward from `81` without regressing runtime behavior
+- drive `tests/compat/runtime_xfail.yaml` from `6` toward `0`
+- keep `tests/compat/xfail.yaml` intentionally managed from `158`, without regressing runtime behavior
 - preserve benchmark guardrails:
   - `Comparable Corpus >= 1.25x` vs `marked`
   - `Marked Fixtures >= 1.00x` vs `marked`

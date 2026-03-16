@@ -57,10 +57,7 @@ pub(crate) fn try_normalize_reference_label(label: &str) -> Option<String> {
             pending_space = false;
         }
 
-        match normalized {
-            'ß' | 'ẞ' => out.push_str("ss"),
-            _ => out.extend(normalized.to_lowercase()),
-        }
+        out.extend(normalized.to_lowercase());
     }
 
     if out.is_empty() { None } else { Some(out) }
@@ -241,7 +238,14 @@ fn parse_blocks_from_lines_mode(
                 .iter()
                 .map(std::string::String::as_str)
                 .collect::<Vec<_>>();
-            let quote_doc = parse_blocks_from_lines(&quote_lines, gfm, pedantic, refs);
+            let quote_doc = parse_blocks_from_lines_mode(
+                &quote_lines,
+                gfm,
+                pedantic,
+                refs,
+                has_potential_reference_definition(&quote_lines),
+                true,
+            );
             let children = match quote_doc {
                 ast::Document::Nodes(nodes) => nodes,
             };
@@ -500,7 +504,8 @@ fn parse_atx_heading(line: &str, pedantic: bool) -> Option<(u8, &str)> {
 }
 
 fn parse_setext_heading(line: &str, underline: &str) -> Option<u8> {
-    let (indent, line) = split_leading_ws(trim_setext_heading_line(line));
+    let line = normalize_setext_heading_line(line);
+    let (indent, line) = split_leading_ws(line);
     if indent > 3 {
         return None;
     }
@@ -571,7 +576,7 @@ fn parse_setext_heading_block(
             return None;
         }
 
-        paragraph_lines.push(trim_setext_heading_line(line));
+        paragraph_lines.push(normalize_setext_heading_line(line));
 
         let Some(next_line) = lines.get(i + 1) else {
             return None;
@@ -616,8 +621,7 @@ fn parse_fenced_code_block(
     if fence_char == b'`' && raw_info.contains('`') {
         return None;
     }
-    let info = decode_html_entities(raw_info);
-    let info = (!info.is_empty()).then_some(info);
+    let info = (!raw_info.is_empty()).then_some(raw_info.to_string());
 
     let mut end = start + 1;
     while end < lines.len() {
@@ -826,6 +830,8 @@ fn parse_list_item(
     } else {
         first_content.to_string()
     });
+    let mut paragraph_started_after_blank = false;
+    let mut current_paragraph_has_content = !first_content.trim().is_empty();
     for raw in lines.iter().skip(1) {
         let (raw_indent, _) = split_leading_ws(raw);
         let normalized = normalize_pedantic_list_line(raw, pedantic);
@@ -834,11 +840,23 @@ fn parse_list_item(
         let stripped = strip_leading_content_indent(normalized, content_indent);
         let pedantic_nested_list =
             pedantic && raw_indent > first_indent && list_marker(text).is_some();
+        if stripped.trim().is_empty() {
+            item_lines.push(stripped);
+            paragraph_started_after_blank = true;
+            current_paragraph_has_content = false;
+            continue;
+        }
+
         if indent < content_indent && !text.is_empty() && !pedantic_nested_list {
-            item_lines.push(force_paragraph_line(&stripped));
+            if paragraph_started_after_blank && current_paragraph_has_content {
+                item_lines.push(force_paragraph_line(normalized));
+            } else {
+                item_lines.push(force_paragraph_line(&stripped));
+            }
         } else {
             item_lines.push(stripped);
         }
+        current_paragraph_has_content = true;
     }
 
     if !force_first_paragraph {
@@ -1430,7 +1448,16 @@ fn parse_blockquote_block(lines: &[&str], start: usize) -> Option<(usize, Vec<St
                 && !is_indented_code_line(&rest)
                 && (!is_block_boundary_without_quote(Some(&rest), false)
                     || blockquote_content_allows_lazy_continuation(&rest));
-            out.push(rest);
+            if rest.trim().is_empty()
+                && !rest.is_empty()
+                && blockquote_has_meaningful_content(&out)
+            {
+                out.push(force_paragraph_line(&rest));
+            } else if rest.trim().is_empty() {
+                out.push(String::new());
+            } else {
+                out.push(rest);
+            }
             i += 1;
             continue;
         }
@@ -1483,6 +1510,14 @@ fn blockquote_content_allows_lazy_continuation(rest: &str) -> bool {
     }
 
     !list_item_starts_with_block(content, false)
+}
+
+fn blockquote_has_meaningful_content(lines: &[String]) -> bool {
+    lines.iter().any(|line| {
+        !strip_forced_paragraph_prefix(strip_lazy_prefix(line))
+            .trim()
+            .is_empty()
+    })
 }
 
 fn is_blockquote_boundary(current: Option<&str>, next: Option<&str>) -> bool {
@@ -2389,7 +2424,7 @@ fn parse_ref_title_and_consumed(raw: &str, pedantic: bool) -> Option<(String, us
     };
 
     let opener_len = opener.len_utf8();
-    let title = decode_html_entities(&unescape_reference_text(&raw[opener_len..end]));
+    let title = unescape_reference_text(&raw[opener_len..end]);
     let consumed = end + quote_end.len_utf8();
     Some((title, consumed))
 }
@@ -2453,9 +2488,7 @@ pub(crate) fn normalize_reference_destination(raw: &str) -> Option<String> {
         unescaped.push(ch);
     }
 
-    Some(percent_encode_reference_destination(&decode_html_entities(
-        &unescaped,
-    )))
+    Some(percent_encode_reference_destination(&unescaped))
 }
 
 fn percent_encode_reference_destination(raw: &str) -> String {
@@ -2482,41 +2515,14 @@ fn percent_encode_reference_destination(raw: &str) -> String {
     out
 }
 
-pub(crate) fn decode_html_entities(raw: &str) -> String {
-    // Fast path: no '&' means no entities to decode
-    if !raw.contains('&') {
-        return raw.to_string();
-    }
-
-    let mut out = String::with_capacity(raw.len());
-    let mut i = 0usize;
-
-    while i < raw.len() {
-        let tail = &raw[i..];
-        if let Some((decoded, consumed)) = parse_html_entity(tail) {
-            out.push_str(&decoded);
-            i += consumed;
-            continue;
-        }
-
-        let Some(ch) = tail.chars().next() else {
-            break;
-        };
-        out.push(ch);
-        i += ch.len_utf8();
-    }
-
-    out
-}
-
-pub(crate) fn parse_html_entity(raw: &str) -> Option<(String, usize)> {
+pub(crate) fn parse_html_entity(raw: &str) -> Option<usize> {
     let rest = raw.strip_prefix('&')?;
     let end = rest.find(';')?;
-    let decoded = decode_entity(&rest[..end])?;
-    Some((decoded, end + 2))
+    validate_html_entity(&rest[..end])?;
+    Some(end + 2)
 }
 
-fn decode_entity(entity: &str) -> Option<String> {
+fn validate_html_entity(entity: &str) -> Option<()> {
     if let Some(hex) = entity
         .strip_prefix("#x")
         .or_else(|| entity.strip_prefix("#X"))
@@ -2524,51 +2530,23 @@ fn decode_entity(entity: &str) -> Option<String> {
         if hex.is_empty() || hex.len() > 6 {
             return None;
         }
-        return Some(decode_numeric_entity(u32::from_str_radix(hex, 16).ok()?));
+        let value = u32::from_str_radix(hex, 16).ok()?;
+        return (value <= 0x10FFFF).then_some(());
     }
     if let Some(dec) = entity.strip_prefix('#') {
         if dec.is_empty() || dec.len() > 7 {
             return None;
         }
-        return Some(decode_numeric_entity(dec.parse::<u32>().ok()?));
+        let value = dec.parse::<u32>().ok()?;
+        return (value <= 0x10FFFF).then_some(());
     }
 
-    let decoded = match entity {
-        "quot" => "\"",
-        "amp" => "&",
-        "lt" => "<",
-        "gt" => ">",
-        "apos" => "'",
-        "nbsp" => "\u{00A0}",
-        "copy" => "\u{00A9}",
-        "AElig" => "\u{00C6}",
-        "Dcaron" => "\u{010E}",
-        "frac34" => "\u{00BE}",
-        "HilbertSpace" => "\u{210B}",
-        "DifferentialD" => "\u{2146}",
-        "ClockwiseContourIntegral" => "\u{2232}",
-        "ngE" => "\u{2267}\u{0338}",
-        "auml" => "ä",
-        "Auml" => "Ä",
-        "ouml" => "ö",
-        "Ouml" => "Ö",
-        "uuml" => "ü",
-        "Uuml" => "Ü",
-        "szlig" => "ß",
-        _ => return None,
-    };
-
-    Some(decoded.to_string())
-}
-
-fn decode_numeric_entity(codepoint: u32) -> String {
-    let ch = match codepoint {
-        0 => '\u{FFFD}',
-        0xD800..=0xDFFF => '\u{FFFD}',
-        0x110000..=u32::MAX => '\u{FFFD}',
-        _ => char::from_u32(codepoint).unwrap_or('\u{FFFD}'),
-    };
-    ch.to_string()
+    let mut chars = entity.chars();
+    let first = chars.next()?;
+    if !first.is_ascii_alphabetic() {
+        return None;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric()).then_some(())
 }
 
 fn unescape_reference_text(raw: &str) -> String {
@@ -2679,10 +2657,6 @@ fn parse_paragraph(
         }
     }
 
-    while matches!(acc.as_bytes().last(), Some(b' ' | b'\t')) {
-        acc.pop();
-    }
-
     let inlines =
         crate::markdown::inline::parse_inline_with_refs_spans(acc.as_str(), gfm, pedantic, refs);
     (
@@ -2732,7 +2706,10 @@ fn html_block_interrupts_paragraph(lines: &[&str], i: usize) -> bool {
 }
 
 fn normalize_paragraph_indent(line: &str, preserve_leading_indent: bool) -> &str {
-    let line = strip_forced_paragraph_prefix(line);
+    if let Some(forced) = line.strip_prefix(FORCED_PARAGRAPH_PREFIX) {
+        return forced;
+    }
+
     if preserve_leading_indent {
         line
     } else {
@@ -2740,8 +2717,8 @@ fn normalize_paragraph_indent(line: &str, preserve_leading_indent: bool) -> &str
     }
 }
 
-fn trim_setext_heading_line(line: &str) -> &str {
-    trim_paragraph_line(strip_forced_paragraph_prefix(line)).trim_end_matches([' ', '\t'])
+fn normalize_setext_heading_line(line: &str) -> &str {
+    strip_forced_paragraph_prefix(line).trim_end_matches('\t')
 }
 
 fn trim_paragraph_line(line: &str) -> &str {
