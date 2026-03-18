@@ -20,12 +20,12 @@ Then read these depending on the workstream:
 
 ## Current Status
 
-As of 2026-03-16, the repository state is:
+As of 2026-03-18, the repository state is:
 
 - the in-house Rust parser is already the default and only production parser
 - snapshot compatibility baseline: `1327 / 1485` passing, `158` tracked gaps
 - current-runtime compatibility baseline: `1479 / 1485` passing, `6` tracked gaps
-- release/publish follow-up: `markast-win32-x64-msvc@0.1.0` is still blocked by npm spam detection
+- release/publish follow-up: npm platform packages (including Windows) are published; `markast@0.1.1` is deprecated and the current release line is `0.1.2`
 
 These numbers come from the checked-in baselines:
 
@@ -39,7 +39,7 @@ If you are picking up the next meaningful work, use this order:
 1. Reduce `tests/compat/runtime_xfail.yaml`.
 2. Keep `tests/compat/xfail.yaml` moving down when the same fix also helps vendored snapshots.
 3. Keep benchmark guardrails intact while fixing compatibility.
-4. Resolve the external npm Windows package publish blocker when release work resumes.
+4. Keep npm release automation healthy (trusted publishing / token rotation).
 
 The current runtime gap is now a small fixture tail:
 
@@ -86,6 +86,7 @@ For agents:
 Stable reference docs:
 
 - `docs/architecture.md`
+- `docs/releasing.md`
 - `docs/testing-and-compat.md`
 - `docs/performance.md`
 

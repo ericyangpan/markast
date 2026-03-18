@@ -2,7 +2,7 @@
 
 This document records the current state of the `markrs` -> `markast` rename and the remaining release work.
 
-Status date: 2026-03-15
+Status date: 2026-03-18
 
 ## Completed
 
@@ -21,49 +21,20 @@ Status date: 2026-03-15
   - `markast-darwin-x64@0.1.0`
   - `markast-linux-arm64-gnu@0.1.0`
   - `markast-linux-x64-gnu@0.1.0`
+  - `markast-win32-x64-msvc@0.1.0`
 - Deprecated legacy npm platform packages:
   - `markrs-darwin-arm64`
   - `markrs-darwin-x64`
   - `markrs-linux-arm64-gnu`
   - `markrs-linux-x64-gnu`
 
-## Remaining Issue
+## Resolution (2026-03-18)
 
-The only incomplete external artifact is:
+npm support lifted the spam-detection block on the Windows package name and created a security holding version
+`markast-win32-x64-msvc@0.0.1-security`, transferring write access to `@arielyang`. Subsequent publishes of
+`markast-win32-x64-msvc` succeeded and the package is now part of the normal release flow.
 
-- `markast-win32-x64-msvc@0.1.0`
-
-Local Windows binary generation was completed with a GNU Windows target to prove the release shape, but npm rejected publishing the `markast-win32-x64-msvc` package name with:
-
-`403 Forbidden - Package name triggered spam detection`
-
-This is an npm registry policy block, not a local build failure and not an authentication problem.
-
-## Current External State
-
-- GitHub repo: `https://github.com/ericyangpan/markast`
-- crates.io crate: `markast`
-- npm root package: `markast`
-- Missing npm package: `markast-win32-x64-msvc`
-
-## Recommended Next Step
-
-File an npm support request for the blocked Windows package name and include:
-
-- package name: `markast-win32-x64-msvc`
-- owner account: `arielyang`
-- publish attempt date: 2026-03-15
-- error: `403 Forbidden - Package name triggered spam detection`
-- root package already published: `markast@0.1.0`
-- this package is the Windows companion package referenced by the published root package as an `optionalDependency`
-- note that related packages under the same namespace were successfully published:
-  - `markast`
-  - `markast-darwin-arm64`
-  - `markast-darwin-x64`
-  - `markast-linux-arm64-gnu`
-  - `markast-linux-x64-gnu`
-
-## npm Support Draft
+## Archived: npm Support Draft (2026-03-15)
 
 Suggested subject:
 

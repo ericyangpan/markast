@@ -26,10 +26,10 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
@@ -74,10 +74,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
@@ -109,7 +109,7 @@ jobs:
             "target/${{ matrix.target }}/release/markast${{ matrix.binary_ext }}"
 
       - name: Upload platform package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.package_dir }}
           path: npm/${{ matrix.package_dir }}
@@ -119,16 +119,17 @@ jobs:
     name: Publish npm packages
     needs: build-platform-package
     runs-on: ubuntu-latest
+    environment: npm
     permissions:
       contents: read
       id-token: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
@@ -148,7 +149,7 @@ jobs:
           fi
 
       - name: Download platform package artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist/platform-packages
 
@@ -235,7 +236,7 @@ jobs:
 
     steps:
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
