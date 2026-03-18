@@ -155,8 +155,6 @@ jobs:
 
       - name: Publish platform packages
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           while IFS= read -r package_json; do
@@ -178,8 +176,6 @@ jobs:
 
       - name: Publish main package
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           name="$(node -p "require('./package.json').name")"

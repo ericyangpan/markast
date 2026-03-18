@@ -56,9 +56,10 @@ After you verify an OIDC-based release works, consider locking down token publis
 Trusted publishing currently applies to `npm publish`. Other write operations (like `npm deprecate`) still
 require traditional authentication.
 
+In this repo, publishing uses OIDC, and `NPM_TOKEN` is kept for workflows/steps that run `npm deprecate`.
+
 If you keep a write token:
 
 - Use a granular token with 2FA enabled
 - Rotate it regularly (write tokens have a 90-day max lifetime)
 - Prefer storing it as an **environment** secret for the GitHub Actions environment `npm` (name: `NPM_TOKEN`)
-
