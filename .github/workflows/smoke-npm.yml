@@ -1,0 +1,74 @@
+name: Smoke (npm)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'markast version to test'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Smoke (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform_pkg: markast-linux-x64-gnu
+          - runner: windows-latest
+            platform_pkg: markast-win32-x64-msvc
+          - runner: macos-14
+            platform_pkg: markast-darwin-arm64
+          - runner: macos-15-intel
+            platform_pkg: markast-darwin-x64
+
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install markast from npm
+        shell: bash
+        env:
+          MARKAST_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          for i in {1..30}; do
+            if npm view "markast@${MARKAST_VERSION}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for markast@${MARKAST_VERSION} to be available on npm (${i}/30)..."
+            sleep 5
+          done
+
+          npm view "markast@${MARKAST_VERSION}" version --registry=https://registry.npmjs.org
+
+          mkdir smoke
+          cd smoke
+          npm init -y >/dev/null 2>&1
+          npm i "markast@${MARKAST_VERSION}" --no-audit --no-fund
+
+      - name: Resolve platform package
+        shell: bash
+        env:
+          MARKAST_PLATFORM_PKG: ${{ matrix.platform_pkg }}
+        run: |
+          set -euo pipefail
+          cd smoke
+          node -e "const { createRequire } = require('node:module'); const pkg = process.env.MARKAST_PLATFORM_PKG; const markastRequire = createRequire(require.resolve('markast/package.json')); const resolved = markastRequire.resolve(`${pkg}/package.json`); console.log(`Resolved ${pkg}: ${resolved}`);"
+
+      - name: Run markast CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd smoke
+          node node_modules/markast/bin/markast.js --help >/dev/null
+          node -e "const { spawnSync } = require('node:child_process'); const res = spawnSync('node', ['node_modules/markast/bin/markast.js', '--document'], { input: '# hi\\n', encoding: 'utf8' }); if (res.status !== 0) { console.error(res.stdout); console.error(res.stderr); process.exit(res.status || 1); } if (!res.stdout.includes('<h1')) { console.error('Unexpected output from markast'); console.error(res.stdout.slice(0, 200)); process.exit(1); } console.log('ok');"

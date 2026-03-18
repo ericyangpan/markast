@@ -259,7 +259,7 @@ jobs:
         run: |
           set -euo pipefail
           cd smoke
-          node -e "const { existsSync } = require('node:fs'); const pkg = process.env.MARKAST_PLATFORM_PKG; if (!existsSync(`node_modules/${pkg}`)) { console.error(`Missing optional platform package: ${pkg}`); process.exit(1); } console.log(`Found ${pkg}`);"
+          node -e "const { createRequire } = require('node:module'); const pkg = process.env.MARKAST_PLATFORM_PKG; const markastRequire = createRequire(require.resolve('markast/package.json')); try { const resolved = markastRequire.resolve(`${pkg}/package.json`); console.log(`Resolved ${pkg}: ${resolved}`); } catch (e) { console.error(`Missing optional platform package: ${pkg}`); console.error(e?.message ?? String(e)); process.exit(1); }"
 
       - name: Run markast CLI
         shell: bash
