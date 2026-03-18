@@ -1,0 +1,88 @@
+name: npm deprecate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to deprecate (e.g. 0.1.1)
+        required: true
+        default: '0.1.1'
+        type: string
+      message:
+        description: Deprecation message
+        required: true
+        default: '0.1.1 was published with a packaging issue (Unix binaries lacked executable permissions). Please upgrade to >=0.1.2.'
+        type: string
+      deprecate_platform_packages:
+        description: Also deprecate platform packages
+        required: false
+        default: true
+        type: boolean
+      include_windows_platform:
+        description: Also include markast-win32-x64-msvc
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  deprecate:
+    name: Deprecate npm versions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Deprecate
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          MESSAGE: ${{ inputs.message }}
+          DEPRECATE_PLATFORM_PACKAGES: ${{ inputs.deprecate_platform_packages }}
+          INCLUDE_WINDOWS_PLATFORM: ${{ inputs.include_windows_platform }}
+        run: |
+          set -euo pipefail
+
+          npm whoami --registry=https://registry.npmjs.org >/dev/null
+
+          version="${VERSION}"
+          msg="${MESSAGE}"
+
+          pkgs=("markast@${version}")
+          if [ "${DEPRECATE_PLATFORM_PACKAGES}" = "true" ]; then
+            pkgs+=(
+              "markast-darwin-arm64@${version}"
+              "markast-darwin-x64@${version}"
+              "markast-linux-x64-gnu@${version}"
+              "markast-linux-arm64-gnu@${version}"
+            )
+
+            if [ "${INCLUDE_WINDOWS_PLATFORM}" = "true" ]; then
+              pkgs+=("markast-win32-x64-msvc@${version}")
+            fi
+          fi
+
+          for spec in "${pkgs[@]}"; do
+            if ! npm view "${spec}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+              echo "::warning::${spec} not found; skipping"
+              continue
+            fi
+
+            current="$(npm view "${spec}" deprecated --registry=https://registry.npmjs.org 2>/dev/null || true)"
+            if [ "${current}" = "${msg}" ]; then
+              echo "Skipping ${spec}; already deprecated"
+              continue
+            fi
+
+            echo "Deprecating ${spec}"
+            if ! npm deprecate "${spec}" "${msg}" --registry=https://registry.npmjs.org; then
+              echo "::warning::Failed to deprecate ${spec}"
+            fi
+          done

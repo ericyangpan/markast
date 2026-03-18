@@ -206,7 +206,15 @@ jobs:
             exit 0
           fi
 
-          npm deprecate "${pkg}@${ver}" "${msg}" --registry=https://registry.npmjs.org
+          current="$(npm view "${pkg}@${ver}" deprecated --registry=https://registry.npmjs.org 2>/dev/null || true)"
+          if [ "${current}" = "${msg}" ]; then
+            echo "${pkg}@${ver} already deprecated; skipping"
+            exit 0
+          fi
+
+          if ! npm deprecate "${pkg}@${ver}" "${msg}" --registry=https://registry.npmjs.org; then
+            echo "::warning::Failed to deprecate ${pkg}@${ver}; continuing"
+          fi
 
   smoke-install:
     name: Smoke install (${{ matrix.runner }})
