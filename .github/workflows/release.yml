@@ -15,6 +15,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Require tag ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
+            echo "Release workflow must run on a tag ref like v0.1.1."
+            echo "Current ref: ${GITHUB_REF}"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -177,3 +187,84 @@ jobs:
           fi
 
           npm publish --access public --provenance
+
+      - name: Deprecate holding package version
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          pkg="markast-win32-x64-msvc"
+          ver="0.0.1-security"
+          msg="Security holding version; do not use. Install markast instead."
+
+          if ! npm view "${pkg}@${ver}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "No ${pkg}@${ver} found; skipping"
+            exit 0
+          fi
+
+          npm deprecate "${pkg}@${ver}" "${msg}" --registry=https://registry.npmjs.org
+
+  smoke-install:
+    name: Smoke install (${{ matrix.runner }})
+    needs: publish-npm
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform_pkg: markast-linux-x64-gnu
+          - runner: windows-latest
+            platform_pkg: markast-win32-x64-msvc
+          - runner: macos-14
+            platform_pkg: markast-darwin-arm64
+          - runner: macos-15-intel
+            platform_pkg: markast-darwin-x64
+
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install markast from npm
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "MARKAST_VERSION=${VERSION}" >> "${GITHUB_ENV}"
+
+          for i in {1..30}; do
+            if npm view "markast@${VERSION}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for markast@${VERSION} to be available on npm (${i}/30)..."
+            sleep 5
+          done
+
+          npm view "markast@${VERSION}" version --registry=https://registry.npmjs.org
+
+          mkdir smoke
+          cd smoke
+          npm init -y >/dev/null 2>&1
+          npm i "markast@${VERSION}" --no-audit --no-fund
+
+      - name: Verify platform package installed
+        shell: bash
+        env:
+          MARKAST_PLATFORM_PKG: ${{ matrix.platform_pkg }}
+        run: |
+          set -euo pipefail
+          cd smoke
+          node -e "const { existsSync } = require('node:fs'); const pkg = process.env.MARKAST_PLATFORM_PKG; if (!existsSync(`node_modules/${pkg}`)) { console.error(`Missing optional platform package: ${pkg}`); process.exit(1); } console.log(`Found ${pkg}`);"
+
+      - name: Run markast CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd smoke
+          node node_modules/markast/bin/markast.js --help >/dev/null
+          node -e "const { spawnSync } = require('node:child_process'); const res = spawnSync('node', ['node_modules/markast/bin/markast.js', '--document'], { input: '# hi\\n', encoding: 'utf8' }); if (res.status !== 0) { console.error(res.stdout); console.error(res.stderr); process.exit(res.status || 1); } if (!res.stdout.includes('<h1')) { console.error('Unexpected output from markast'); console.error(res.stdout.slice(0, 200)); process.exit(1); } console.log('ok');"

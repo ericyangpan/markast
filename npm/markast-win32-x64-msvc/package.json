@@ -1,6 +1,6 @@
 {
   "name": "markast-win32-x64-msvc",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "description": "Prebuilt markast binary for Windows x64 MSVC",
   "repository": {
