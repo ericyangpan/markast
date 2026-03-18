@@ -63,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           cd smoke
-          node -e "const { createRequire } = require('node:module'); const pkg = process.env.MARKAST_PLATFORM_PKG; const markastRequire = createRequire(require.resolve('markast/package.json')); const resolved = markastRequire.resolve(`${pkg}/package.json`); console.log(`Resolved ${pkg}: ${resolved}`);"
+          node -e "const { createRequire } = require('node:module'); const pkg = process.env.MARKAST_PLATFORM_PKG; const markastRequire = createRequire(require.resolve('markast/package.json')); const resolved = markastRequire.resolve(pkg + '/package.json'); console.log('Resolved ' + pkg + ': ' + resolved);"
 
       - name: Run markast CLI
         shell: bash
