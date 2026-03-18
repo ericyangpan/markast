@@ -1,6 +1,6 @@
 {
   "name": "markast",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Rust-powered markdown to HTML renderer with customizable styles",
   "license": "MIT",
   "repository": {
@@ -15,11 +15,11 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "markast-darwin-arm64": "0.1.1",
-    "markast-darwin-x64": "0.1.1",
-    "markast-linux-arm64-gnu": "0.1.1",
-    "markast-linux-x64-gnu": "0.1.1",
-    "markast-win32-x64-msvc": "0.1.1"
+    "markast-darwin-arm64": "0.1.2",
+    "markast-darwin-x64": "0.1.2",
+    "markast-linux-arm64-gnu": "0.1.2",
+    "markast-linux-x64-gnu": "0.1.2",
+    "markast-win32-x64-msvc": "0.1.2"
   },
   "bin": {
     "markast": "bin/markast.js"

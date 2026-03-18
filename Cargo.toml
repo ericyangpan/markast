@@ -1,6 +1,6 @@
 [package]
 name = "markast"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Rust-powered markdown to HTML renderer with customizable styles"
 license = "MIT"

@@ -169,6 +169,9 @@ jobs:
             fi
 
             echo "Publishing ${name}@${version}"
+            if [ "$name" != "markast-win32-x64-msvc" ]; then
+              chmod +x "$dir/bin/markast"
+            fi
             npm publish "$dir" --access public --provenance
           done < <(find dist/platform-packages -name package.json -not -path '*/node_modules/*' | sort)
 

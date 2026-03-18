@@ -1,6 +1,6 @@
 {
   "name": "markast-linux-x64-gnu",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
   "description": "Prebuilt markast binary for Linux x64 GNU",
   "repository": {
